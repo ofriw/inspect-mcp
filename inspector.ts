@@ -1,8 +1,19 @@
-import type { InspectElementArgs, InspectionResult, BoxModel, CascadeRule } from './types.js';
+import type { InspectElementArgs, InspectionResult, BoxModel, CascadeRule, GroupedStyles } from './types.js';
 import { ensureChromeWithCDP, connectToTarget, CDPClient } from './cdp-client.js';
+import { 
+  DEFAULT_PROPERTY_GROUPS, 
+  shouldIncludeProperty, 
+  categorizeProperties, 
+  type PropertyGroup 
+} from './property-groups.js';
 
 export async function inspectElement(args: InspectElementArgs): Promise<InspectionResult> {
-  const { css_selector, url } = args;
+  const { 
+    css_selector, 
+    url, 
+    property_groups = DEFAULT_PROPERTY_GROUPS,
+    include_all_properties = false 
+  } = args;
   
   // Get or launch Chrome instance
   const browser = await ensureChromeWithCDP();
@@ -14,14 +25,12 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
   try {
     // These domains should already be enabled during navigation
     // But enable them again in case we're reusing a tab
-    console.error('Ensuring CDP domains are enabled...');
     await cdp.send('DOM.enable');
     await cdp.send('CSS.enable');
     await cdp.send('Page.enable');
     await cdp.send('Overlay.enable');
     
     // Get document with retry logic
-    console.error('Getting document...');
     let doc;
     let attempts = 0;
     const maxAttempts = 3;
@@ -30,14 +39,12 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
       try {
         doc = await cdp.send('DOM.getDocument');
         if (doc && doc.root && doc.root.nodeId) {
-          console.error(`Document retrieved successfully (attempt ${attempts + 1})`);
           break;
         } else {
           throw new Error('Document root is empty or invalid');
         }
       } catch (error) {
         attempts++;
-        console.error(`DOM.getDocument attempt ${attempts} failed:`, error);
         if (attempts >= maxAttempts) {
           throw new Error(`Failed to get document after ${maxAttempts} attempts: ${error}`);
         }
@@ -47,44 +54,35 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
     }
     
     // Find element (querySelector returns first matching element)
-    console.error(`Searching for element: ${css_selector}`);
     const nodeResult = await cdp.send('DOM.querySelector', {
       nodeId: doc.root.nodeId,
       selector: css_selector
     });
     
     if (!nodeResult.nodeId) {
-      console.error(`Element not found with selector: ${css_selector}`);
-      console.error('Document root nodeId:', doc.root.nodeId);
       throw new Error(`Element not found: ${css_selector}`);
     }
     
-    console.error(`Element found with nodeId: ${nodeResult.nodeId}`);
     const nodeId = nodeResult.nodeId;
     
     // Get box model for bounds
-    console.error('Getting box model...');
     const boxModelResult = await cdp.send('DOM.getBoxModel', { nodeId });
     if (!boxModelResult.model) {
       throw new Error(`Unable to get box model for element: ${css_selector}. Element may not be visible.`);
     }
     const boxModel = convertBoxModel(boxModelResult.model);
-    console.error('Box model retrieved successfully');
     
     // Get computed styles
-    console.error('Getting computed styles...');
     const computedStylesResult = await cdp.send('CSS.getComputedStyleForNode', { nodeId });
-    const computedStyles = convertComputedStyles(computedStylesResult.computedStyle);
-    console.error('Computed styles retrieved successfully');
+    const allComputedStyles = convertComputedStyles(computedStylesResult.computedStyle);
+    const filteredComputedStyles = filterComputedStyles(allComputedStyles, property_groups as PropertyGroup[], include_all_properties);
     
     // Get matching CSS rules (cascade)
-    console.error('Getting cascade rules...');
     const matchedStylesResult = await cdp.send('CSS.getMatchedStylesForNode', { nodeId });
-    const cascadeRules = convertCascadeRules(matchedStylesResult);
-    console.error('Cascade rules retrieved successfully');
+    const allCascadeRules = convertCascadeRules(matchedStylesResult);
+    const filteredCascadeRules = filterCascadeRules(allCascadeRules, property_groups as PropertyGroup[], include_all_properties);
     
     // Highlight element with overlay
-    console.error('Highlighting element...');
     await cdp.send('Overlay.highlightNode', {
       nodeId,
       highlightConfig: {
@@ -97,10 +95,8 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
         showExtensionLines: true
       }
     });
-    console.error('Element highlighted successfully');
     
     // Capture full viewport screenshot with overlay
-    console.error('Capturing screenshot...');
     const screenshotResult = await cdp.send('Page.captureScreenshot', {
       format: 'png'
     });
@@ -108,25 +104,34 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
     if (!screenshotResult.data) {
       throw new Error('Failed to capture screenshot. The page may not be loaded or visible.');
     }
-    console.error('Screenshot captured successfully');
     
     // Clear overlay
-    console.error('Clearing overlay...');
     await cdp.send('Overlay.hideHighlight');
-    console.error('Overlay cleared successfully');
     
-    console.error('Inspection completed successfully');
+    // Create grouped styles if filtering is applied
+    const groupedStyles = !include_all_properties ? 
+      categorizeProperties(filteredComputedStyles) : undefined;
+    
+    // Create stats
+    const stats = {
+      total_properties: Object.keys(allComputedStyles).length,
+      filtered_properties: Object.keys(filteredComputedStyles).length,
+      total_rules: allCascadeRules.length,
+      filtered_rules: filteredCascadeRules.length
+    };
+    
+    
     return {
       screenshot: `data:image/png;base64,${screenshotResult.data}`,
-      computed_styles: computedStyles,
-      cascade_rules: cascadeRules,
-      box_model: boxModel
+      computed_styles: filteredComputedStyles,
+      grouped_styles: groupedStyles,
+      cascade_rules: filteredCascadeRules,
+      box_model: boxModel,
+      stats
     };
     
   } finally {
-    console.error('Closing CDP connection...');
     cdp.close();
-    console.error('CDP connection closed');
   }
 }
 
@@ -250,4 +255,84 @@ function calculateSpecificity(selector: string): string {
   ).length;
   
   return `${inline},${ids},${classes},${elements}`;
+}
+
+function filterComputedStyles(
+  styles: Record<string, string>, 
+  requestedGroups: PropertyGroup[], 
+  includeAll: boolean
+): Record<string, string> {
+  if (includeAll) {
+    return styles;
+  }
+  
+  const filtered: Record<string, string> = {};
+  
+  for (const [property, value] of Object.entries(styles)) {
+    if (shouldIncludeProperty(property, requestedGroups, includeAll)) {
+      // Truncate very long values for token efficiency
+      const truncatedValue = truncateValue(property, value);
+      filtered[property] = truncatedValue;
+    }
+  }
+  
+  return filtered;
+}
+
+function filterCascadeRules(
+  rules: CascadeRule[], 
+  requestedGroups: PropertyGroup[], 
+  includeAll: boolean
+): CascadeRule[] {
+  if (includeAll) {
+    return rules;
+  }
+  
+  const filtered: CascadeRule[] = [];
+  
+  for (const rule of rules) {
+    // Skip user-agent rules unless explicitly needed
+    if (rule.source === 'user-agent' && !includeAll) {
+      continue;
+    }
+    
+    // Filter properties within the rule
+    const filteredProperties: Record<string, string> = {};
+    let hasRelevantProperties = false;
+    
+    for (const [property, value] of Object.entries(rule.properties)) {
+      if (shouldIncludeProperty(property, requestedGroups, includeAll)) {
+        filteredProperties[property] = truncateValue(property, value);
+        hasRelevantProperties = true;
+      }
+    }
+    
+    // Only include rule if it has relevant properties
+    if (hasRelevantProperties) {
+      filtered.push({
+        ...rule,
+        properties: filteredProperties
+      });
+    }
+  }
+  
+  return filtered;
+}
+
+function truncateValue(property: string, value: string): string {
+  // Truncate very long values to reduce token usage
+  if (value.length <= 100) {
+    return value;
+  }
+  
+  // Special handling for font-family - keep first 3 fonts
+  if (property === 'font-family') {
+    const fonts = value.split(',').map(f => f.trim());
+    if (fonts.length > 3) {
+      return fonts.slice(0, 3).join(', ') + ', ...';
+    }
+  }
+  
+  // For other long values, truncate with ellipsis
+  return value.substring(0, 97) + '...';
 }

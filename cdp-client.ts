@@ -62,13 +62,9 @@ async function httpPut(url: string): Promise<{ status: number; data: string }> {
 async function connectToChrome(port: number, maxRetries = 5): Promise<BrowserInstance> {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      console.error(`Attempt ${i + 1}/${maxRetries}: Connecting to Chrome on port ${port}`);
-      
       const versionResponse = await httpGet(`http://localhost:${port}/json/version`);
       if (versionResponse.status === 200) {
         const version = JSON.parse(versionResponse.data) as ChromeVersion;
-        console.error(`Successfully connected to ${version.Browser}`);
-        
         const targetsResponse = await httpGet(`http://localhost:${port}/json`);
         const targets = JSON.parse(targetsResponse.data) as ChromeTarget[];
         
@@ -78,15 +74,12 @@ async function connectToChrome(port: number, maxRetries = 5): Promise<BrowserIns
           targets,
           chromeInstance
         };
-      } else {
-        console.error(`Port ${port}: HTTP ${versionResponse.status}`);
       }
     } catch (error) {
       const err = error as Error;
       if (i === maxRetries - 1) {
         throw new Error(`Failed to connect to Chrome after ${maxRetries} attempts: ${err.message}`);
       }
-      console.error(`Connection attempt ${i + 1} failed: ${err.message}, retrying...`);
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
@@ -100,11 +93,9 @@ async function cleanup(): Promise<void> {
   }
   
   isCleaningUp = true;
-  console.error('Cleaning up Chrome instance...');
   
   try {
     await chromeInstance.kill();
-    console.error('Chrome instance terminated gracefully');
   } catch (error) {
     console.error('Failed to kill Chrome gracefully, forcing termination:', error);
     try {
@@ -124,7 +115,6 @@ function setupCleanupHandlers(): void {
   
   signals.forEach(signal => {
     process.on(signal, async () => {
-      console.error(`Received ${signal}, cleaning up Chrome...`);
       await cleanup();
       process.exit(0);
     });
@@ -160,23 +150,19 @@ setupCleanupHandlers();
 export async function ensureChromeWithCDP(): Promise<BrowserInstance> {
   // If we already have a Chrome instance, reuse it
   if (chromeInstance) {
-    console.error('Reusing existing Chrome instance');
     try {
       return await connectToChrome(chromeInstance.port);
     } catch (error) {
-      console.error('Existing Chrome instance is not responding, launching new one...');
       await cleanup();
     }
   }
 
   // Always clear the URL map when launching a new Chrome instance
-  console.error('Clearing URL-to-tab mapping for fresh Chrome instance');
   urlToTargetMap.clear();
   
   try {
     // Create a unique user data directory for this Chrome instance
     const userDataDir = join(tmpdir(), `chrome-mcp-${randomBytes(8).toString('hex')}`);
-    console.error(`Launching new Chrome instance with user data dir: ${userDataDir}`);
     
     // Ensure the directory exists with proper permissions to prevent ENOENT in chrome-launcher
     mkdirSync(userDataDir, { recursive: true, mode: 0o700 });
@@ -210,8 +196,6 @@ export async function ensureChromeWithCDP(): Promise<BrowserInstance> {
       handleSIGINT: false                   // We'll handle signals ourselves
     });
     
-    console.error(`Chrome launched successfully on port ${chromeInstance.port}`);
-
     // Connect to the launched Chrome instance
     return await connectToChrome(chromeInstance.port);
     
@@ -248,10 +232,8 @@ async function waitForConnection(ws: WebSocket): Promise<void> {
 
 export async function connectToTarget(browser: BrowserInstance, url: string): Promise<WebSocket> {
   // Refresh targets to get current state
-  console.error('Refreshing targets list...');
   const targetsResponse = await httpGet(`http://localhost:${browser.port}/json`);
   browser.targets = JSON.parse(targetsResponse.data) as ChromeTarget[];
-  console.error(`Found ${browser.targets.length} targets`);
   
   let target: ChromeTarget | undefined;
   
@@ -262,7 +244,7 @@ export async function connectToTarget(browser: BrowserInstance, url: string): Pr
     
     // If target still exists and is at the right URL, reuse it
     if (target && target.url === url) {
-      console.error(`Reusing existing tab for ${url}`);
+      // Reuse the existing tab
     } else {
       // Target was closed or navigated away, remove from map
       urlToTargetMap.delete(url);
@@ -272,7 +254,6 @@ export async function connectToTarget(browser: BrowserInstance, url: string): Pr
   
   // Create new tab if needed
   if (!target) {
-    console.error(`Creating new tab for ${url}`);
     const newTabResponse = await httpPut(`http://localhost:${browser.port}/json/new`);
     const newTab = JSON.parse(newTabResponse.data) as ChromeTarget;
     
@@ -289,27 +270,22 @@ export async function connectToTarget(browser: BrowserInstance, url: string): Pr
   }
   
   // Connect to WebSocket
-  console.error(`Connecting to target: ${target.url} (${target.id})`);
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await waitForConnection(ws);
   
   // Navigate to URL if not already there
   if (target.url !== url) {
-    console.error(`Navigating to ${url}`);
     const cdp = new CDPClient(ws);
     
     // Enable all required domains BEFORE navigation
-    console.error('Enabling CDP domains...');
     await cdp.send('Page.enable');
     await cdp.send('DOM.enable');
     await cdp.send('CSS.enable');
     await cdp.send('Overlay.enable');
     
-    console.error('Starting navigation...');
     await cdp.send('Page.navigate', { url });
     
     // Wait for navigation to complete
-    console.error('Waiting for page to load...');
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('Navigation timeout')), 30000);
       let loadEventFired = false;
@@ -318,7 +294,6 @@ export async function connectToTarget(browser: BrowserInstance, url: string): Pr
       const checkComplete = () => {
         if (loadEventFired && domContentLoaded) {
           clearTimeout(timeout);
-          console.error('Both load and DOMContent events fired');
           // Add small delay for file:// URLs to ensure DOM is stable
           setTimeout(() => resolve(undefined), url.startsWith('file://') ? 1000 : 100);
         }
@@ -329,11 +304,9 @@ export async function connectToTarget(browser: BrowserInstance, url: string): Pr
       websocket.on('message', (data) => {
         const message = JSON.parse(data.toString());
         if (message.method === 'Page.loadEventFired') {
-          console.error('Page.loadEventFired received');
           loadEventFired = true;
           checkComplete();
         } else if (message.method === 'Page.domContentEventFired') {
-          console.error('Page.domContentEventFired received');
           domContentLoaded = true;
           checkComplete();
         }
@@ -341,13 +314,10 @@ export async function connectToTarget(browser: BrowserInstance, url: string): Pr
       
       // Fallback: continue even if events don't fire within reasonable time
       setTimeout(() => {
-        console.error('Navigation fallback timeout - continuing anyway');
         clearTimeout(timeout);
         resolve(undefined);
       }, 8000);
     });
-    
-    console.error(`Navigation to ${url} completed`);
   }
   
   return ws;

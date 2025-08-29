@@ -23,7 +23,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: 'inspect_element',
-        description: 'Inspects the first DOM element matching a CSS selector and returns visual and style information',
+        description: 'Inspects the first DOM element matching a CSS selector and returns visual and style information. Response is optimized for LLM consumption with property grouping.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -34,6 +34,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             url: {
               type: 'string',
               description: 'URL of the page to inspect',
+            },
+            property_groups: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'CSS property groups to include. Options: layout, box, flexbox, grid, typography, colors, visual, positioning, custom. Defaults to ["layout", "box", "typography", "colors"]',
+            },
+            include_all_properties: {
+              type: 'boolean',
+              description: 'Include all CSS properties without filtering. Defaults to false. When true, property_groups is ignored.',
             },
           },
           required: ['css_selector', 'url'],
@@ -56,7 +65,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Validate and convert arguments
     const inspectArgs: InspectElementArgs = {
       css_selector: typedArgs.css_selector as string,
-      url: typedArgs.url as string
+      url: typedArgs.url as string,
+      property_groups: typedArgs.property_groups as string[] | undefined,
+      include_all_properties: typedArgs.include_all_properties as boolean | undefined
     };
     
     // Validate required arguments
@@ -67,22 +78,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       throw new Error('url is required');
     }
     
-    console.error(`Inspecting element: ${inspectArgs.css_selector}`);
-    console.error(`Page URL: ${inspectArgs.url}`);
-    
     const result = await inspectElement(inspectArgs);
     
     // Extract base64 data from data URL for image block
     const base64Data = result.screenshot.replace(/^data:image\/png;base64,/, '');
     
     // Create structured diagnostic data object
-    const diagnosticData = {
+    const diagnosticData: any = {
       selector: inspectArgs.css_selector,
       url: inspectArgs.url,
-      computed_styles: result.computed_styles,
-      cascade_rules: result.cascade_rules,
       box_model: result.box_model
     };
+    
+    // Add grouped styles if available (more organized for LLMs)
+    if (result.grouped_styles) {
+      diagnosticData.grouped_styles = result.grouped_styles;
+      diagnosticData.computed_styles_summary = {
+        total_properties: result.stats?.total_properties || 0,
+        filtered_properties: result.stats?.filtered_properties || 0,
+        groups_requested: inspectArgs.property_groups || ['layout', 'box', 'typography', 'colors']
+      };
+    } else {
+      diagnosticData.computed_styles = result.computed_styles;
+    }
+    
+    // Add cascade rules (filtered)
+    diagnosticData.cascade_rules = result.cascade_rules;
+    if (result.stats) {
+      diagnosticData.cascade_rules_summary = {
+        total_rules: result.stats.total_rules,
+        filtered_rules: result.stats.filtered_rules
+      };
+    }
     
     return {
       content: [
@@ -122,17 +149,14 @@ async function main() {
   
   // Handle cleanup on exit
   process.on('SIGINT', () => {
-    console.error('Received SIGINT, shutting down gracefully...');
     process.exit(0);
   });
   
   process.on('SIGTERM', () => {
-    console.error('Received SIGTERM, shutting down gracefully...');
     process.exit(0);
   });
   
   await server.connect(transport);
-  console.error('CDP Inspector MCP server running on stdio');
 }
 
 main().catch((error) => {
