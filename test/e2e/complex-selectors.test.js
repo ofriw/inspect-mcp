@@ -122,14 +122,25 @@ test('Complex CSS selectors', async (t) => {
             assert.ok(response.result.content, `${testCase.name} should have content array`);
             
             // Parse diagnostic data from JSON content
+            assert.ok(response.result.content.length >= 3, `${testCase.name} should have at least 3 content items`);
+            assert.ok(response.result.content[2], `${testCase.name} should have third content item`);
+            assert.ok(response.result.content[2].text, `${testCase.name} should have text in third content item`);
+            
             const diagnosticData = JSON.parse(response.result.content[2].text);
             assert.ok(response.result.content[1].type === 'image', `${testCase.name} should include screenshot`);
-            assert.ok(diagnosticData.computed_styles, `${testCase.name} should include computed styles`);
+            assert.ok(diagnosticData.grouped_styles, `${testCase.name} should include grouped styles`);
             assert.ok(diagnosticData.box_model, `${testCase.name} should include box model`);
 
-            // Check expected properties
+            // Check expected properties in grouped styles
             for (const [property, expectedValue] of Object.entries(testCase.expectedProperties)) {
-                const actualValue = diagnosticData.computed_styles[property];
+                // Find property in the appropriate group
+                let actualValue = null;
+                for (const group of Object.values(diagnosticData.grouped_styles)) {
+                    if (group[property]) {
+                        actualValue = group[property];
+                        break;
+                    }
+                }
                 assert.strictEqual(
                     actualValue, 
                     expectedValue, 
@@ -151,8 +162,10 @@ test('Complex CSS selectors', async (t) => {
 
         assert.ok(compoundResponse.result, 'Compound selector should work');
         const compoundData = JSON.parse(compoundResponse.result.content[2].text);
+        // Find background-color in colors group
+        const backgroundColor = compoundData.grouped_styles.colors['background-color'];
         assert.strictEqual(
-            compoundData.computed_styles['background-color'],
+            backgroundColor,
             'rgb(52, 168, 83)',
             'Compound selector should match correct element'
         );

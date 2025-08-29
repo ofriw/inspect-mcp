@@ -98,11 +98,13 @@ test('Basic element inspection', async (t) => {
         assert.strictEqual(jsonContent.type, 'text', 'Third item should be text');
         const diagnosticData = JSON.parse(jsonContent.text);
         
-        // Validate computed styles
-        assert.ok(diagnosticData.computed_styles, 'Should include computed styles');
-        assert.strictEqual(diagnosticData.computed_styles['background-color'], 'rgb(66, 133, 244)', 'Should have correct background color');
-        assert.strictEqual(diagnosticData.computed_styles['width'], '400px', 'Should have correct width');
-        assert.strictEqual(diagnosticData.computed_styles['height'], '60px', 'Should have correct height');
+        // Validate grouped styles (new optimized structure)
+        assert.ok(diagnosticData.grouped_styles, 'Should include grouped styles');
+        assert.ok(diagnosticData.grouped_styles.colors, 'Should have colors group');
+        assert.ok(diagnosticData.grouped_styles.box, 'Should have box group');
+        assert.strictEqual(diagnosticData.grouped_styles.colors['background-color'], 'rgb(66, 133, 244)', 'Should have correct background color');
+        assert.strictEqual(diagnosticData.grouped_styles.box['width'], '400px', 'Should have correct width');
+        assert.strictEqual(diagnosticData.grouped_styles.box['height'], '60px', 'Should have correct height');
 
         // Validate box model
         assert.ok(diagnosticData.box_model, 'Should include box model');

@@ -92,7 +92,7 @@ test('URL navigation handling', async (t) => {
         assert.ok(inspectionResponse.result, 'Should successfully inspect with correct target');
         assert.ok(inspectionResponse.result.content[1].type === 'image', 'Should include screenshot');
         const inspectionData = JSON.parse(inspectionResponse.result.content[2].text);
-        assert.ok(inspectionData.computed_styles, 'Should include computed styles');
+        assert.ok(inspectionData.grouped_styles, 'Should include grouped styles');
 
         // Test 3: Try with invalid URL format
         const wrongTargetResponse = await mcpClient.callTool('inspect_element', {

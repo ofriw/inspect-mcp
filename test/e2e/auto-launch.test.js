@@ -66,7 +66,7 @@ test('Auto-launch Chrome when none available', async (t) => {
             assert.ok(inspectionResponse.result, 'Should successfully inspect with auto-launched Chrome');
             assert.ok(inspectionResponse.result.content[1].type === 'image', 'Should include screenshot');
             const diagnosticData = JSON.parse(inspectionResponse.result.content[2].text);
-            assert.ok(diagnosticData.computed_styles, 'Should include computed styles');
+            assert.ok(diagnosticData.grouped_styles, 'Should include grouped styles');
             assert.ok(diagnosticData.box_model, 'Should include box model');
         }
 
