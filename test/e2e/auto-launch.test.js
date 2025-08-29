@@ -47,10 +47,10 @@ test('Auto-launch Chrome when none available', async (t) => {
         await new Promise(resolve => setTimeout(resolve, 3000));
 
         // Chrome should be auto-launched and ready
-        // Try to inspect the body element of whatever page Chrome opened with
+        // Try to inspect the body element of Google's homepage
         const inspectionResponse = await mcpClient.callTool('inspect_element', {
-            css_selector: 'body'
-            // No target_title - should use auto-launched Chrome's default tab
+            css_selector: 'body',
+            url: 'https://www.google.com'
         });
 
         // The response might be an error (if default page doesn't have expected elements)
@@ -64,9 +64,10 @@ test('Auto-launch Chrome when none available', async (t) => {
         } else {
             // If we get a success, Chrome was launched and we can inspect elements
             assert.ok(inspectionResponse.result, 'Should successfully inspect with auto-launched Chrome');
-            assert.ok(inspectionResponse.result.screenshot, 'Should include screenshot');
-            assert.ok(inspectionResponse.result.computed_styles, 'Should include computed styles');
-            assert.ok(inspectionResponse.result.box_model, 'Should include box model');
+            assert.ok(inspectionResponse.result.content[1].type === 'image', 'Should include screenshot');
+            const diagnosticData = JSON.parse(inspectionResponse.result.content[2].text);
+            assert.ok(diagnosticData.computed_styles, 'Should include computed styles');
+            assert.ok(diagnosticData.box_model, 'Should include box model');
         }
 
         // Verify that Chrome was indeed launched by checking if we can find a Chrome process

@@ -115,17 +115,21 @@ test('Complex CSS selectors', async (t) => {
             
             const response = await mcpClient.callTool('inspect_element', {
                 css_selector: testCase.selector,
-                target_title: 'CDP Inspector Test Page'
+                url: testUrl
             });
 
             assert.ok(response.result, `${testCase.name} should have a result`);
-            assert.ok(response.result.screenshot, `${testCase.name} should include screenshot`);
-            assert.ok(response.result.computed_styles, `${testCase.name} should include computed styles`);
-            assert.ok(response.result.box_model, `${testCase.name} should include box model`);
+            assert.ok(response.result.content, `${testCase.name} should have content array`);
+            
+            // Parse diagnostic data from JSON content
+            const diagnosticData = JSON.parse(response.result.content[2].text);
+            assert.ok(response.result.content[1].type === 'image', `${testCase.name} should include screenshot`);
+            assert.ok(diagnosticData.computed_styles, `${testCase.name} should include computed styles`);
+            assert.ok(diagnosticData.box_model, `${testCase.name} should include box model`);
 
             // Check expected properties
             for (const [property, expectedValue] of Object.entries(testCase.expectedProperties)) {
-                const actualValue = response.result.computed_styles[property];
+                const actualValue = diagnosticData.computed_styles[property];
                 assert.strictEqual(
                     actualValue, 
                     expectedValue, 
@@ -142,12 +146,13 @@ test('Complex CSS selectors', async (t) => {
         // Test compound selectors
         const compoundResponse = await mcpClient.callTool('inspect_element', {
             css_selector: 'button.test-button#primary-button',
-            target_title: 'CDP Inspector Test Page'
+            url: testUrl
         });
 
         assert.ok(compoundResponse.result, 'Compound selector should work');
+        const compoundData = JSON.parse(compoundResponse.result.content[2].text);
         assert.strictEqual(
-            compoundResponse.result.computed_styles['background-color'],
+            compoundData.computed_styles['background-color'],
             'rgb(52, 168, 83)',
             'Compound selector should match correct element'
         );
@@ -160,12 +165,13 @@ test('Complex CSS selectors', async (t) => {
         // Test element with precise dimensions
         const preciseBoxResponse = await mcpClient.callTool('inspect_element', {
             css_selector: '#precise-box',
-            target_title: 'CDP Inspector Test Page'
+            url: testUrl
         });
 
         assert.ok(preciseBoxResponse.result, 'Precise box selector should work');
         
-        const boxModel = preciseBoxResponse.result.box_model;
+        const preciseData = JSON.parse(preciseBoxResponse.result.content[2].text);
+        const boxModel = preciseData.box_model;
         
         // Verify box model dimensions
         // Content box should be 200x100

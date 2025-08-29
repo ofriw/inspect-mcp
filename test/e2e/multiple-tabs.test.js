@@ -10,7 +10,7 @@ import { createTestServer } from '../helpers/chrome-test-server.js';
 const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-test('Multiple tabs handling', async (t) => {
+test('URL navigation handling', async (t) => {
     let testServer = null;
     let mcpClient = null;
     let chromeProcess = null;
@@ -71,51 +71,53 @@ test('Multiple tabs handling', async (t) => {
         const serverPath = join(__dirname, '..', '..', 'dist', 'index.js');
         mcpClient = await createMCPClient(serverPath);
 
-        // Test 1: Try without target_title (should use first tab which lacks our element)
+        // Test 1: Try with wrong URL (should get element not found)
         const noTargetResponse = await mcpClient.callTool('inspect_element', {
-            css_selector: '#test-header'
-            // No target_title provided - will use first available tab
+            css_selector: '#test-header',
+            url: 'https://www.google.com'  // Google doesn't have our test element
         });
         
-        // Should get an error because first tab (example.com) doesn't have our element
-        assert.ok(noTargetResponse.result.isError, 'Should get error when element not found in first tab');
+        // Should get an error because Google doesn't have our element
+        assert.ok(noTargetResponse.result.isError, 'Should get error when element not found on wrong page');
         assert.ok(noTargetResponse.result.content[0].text.includes('Element not found'), 
-            'Should get element not found error from wrong tab');
-        console.log('✅ Correctly received error for wrong tab:', noTargetResponse.result.content[0].text);
+            'Should get element not found error from wrong page');
+        console.log('✅ Correctly received error for wrong page:', noTargetResponse.result.content[0].text);
 
-        // Test 2: Use specific target_title to select correct tab
+        // Test 2: Use correct URL to navigate to test page
         const inspectionResponse = await mcpClient.callTool('inspect_element', {
             css_selector: '#test-header',
-            target_title: 'CDP Inspector Test Page'
+            url: testUrl
         });
 
         assert.ok(inspectionResponse.result, 'Should successfully inspect with correct target');
-        assert.ok(inspectionResponse.result.screenshot, 'Should include screenshot');
-        assert.ok(inspectionResponse.result.computed_styles, 'Should include computed styles');
+        assert.ok(inspectionResponse.result.content[1].type === 'image', 'Should include screenshot');
+        const inspectionData = JSON.parse(inspectionResponse.result.content[2].text);
+        assert.ok(inspectionData.computed_styles, 'Should include computed styles');
 
-        // Test 3: Try with wrong target_title
+        // Test 3: Try with invalid URL format
         const wrongTargetResponse = await mcpClient.callTool('inspect_element', {
             css_selector: '#test-header',
-            target_title: 'Non-existent Page Title'
+            url: 'invalid-url-format'
         });
         
-        // Should get an error because target title doesn't exist
-        assert.ok(wrongTargetResponse.result.isError, 'Should get error for non-existent target title');
+        // Should get an error because URL is invalid
+        assert.ok(wrongTargetResponse.result.isError, 'Should get error for invalid URL');
         const errorText = wrongTargetResponse.result.content[0].text;
-        assert.ok(errorText.includes('Target not found') || errorText.includes('not found'), 
-            'Should get target not found error');
-        console.log('✅ Correctly received error for wrong target title:', errorText);
+        assert.ok(errorText.includes('Error') || errorText.includes('failed'), 
+            'Should get navigation error');
+        console.log('✅ Correctly received error for invalid URL:', errorText);
 
-        // Test 4: Try with partial title match
-        const partialTitleResponse = await mcpClient.callTool('inspect_element', {
+        // Test 4: Navigate back to correct URL and verify it works
+        const secondInspectionResponse = await mcpClient.callTool('inspect_element', {
             css_selector: '#test-header',
-            target_title: 'Test Page'  // Partial match for "CDP Inspector Test Page"
+            url: testUrl
         });
 
-        assert.ok(partialTitleResponse.result, 'Should work with partial title match');
-        console.log('✅ Partial title match works correctly');
+        assert.ok(secondInspectionResponse.result, 'Should work correctly after navigation');
+        assert.ok(secondInspectionResponse.result.content[1].type === 'image', 'Should include screenshot');
+        console.log('✅ Second navigation works correctly');
 
-        console.log('✅ Multiple tabs test passed');
+        console.log('✅ URL navigation test passed');
 
     } finally {
         // Cleanup

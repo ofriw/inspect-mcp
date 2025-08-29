@@ -70,7 +70,7 @@ test('Element not found error handling', async (t) => {
         // Test with non-existent element
         const response = await mcpClient.callTool('inspect_element', {
             css_selector: '#non-existent-element',
-            target_title: 'CDP Inspector Test Page'
+            url: testUrl
         });
         
         // Should get an error response
@@ -82,7 +82,7 @@ test('Element not found error handling', async (t) => {
         // Test with malformed CSS selector
         const selectorResponse = await mcpClient.callTool('inspect_element', {
             css_selector: '###invalid-selector',
-            target_title: 'CDP Inspector Test Page'
+            url: testUrl
         });
         
         // Should get an error response

@@ -78,35 +78,44 @@ test('Basic element inspection', async (t) => {
         // Test basic element inspection
         const inspectionResponse = await mcpClient.callTool('inspect_element', {
             css_selector: '#test-header',
-            target_title: 'CDP Inspector Test Page'
+            url: testUrl
         });
 
         assert.ok(inspectionResponse.result, 'Inspection should have a result');
         
         const result = inspectionResponse.result;
+        assert.ok(result.content, 'Should have content array');
+        assert.strictEqual(result.content.length, 3, 'Should have 3 content items');
         
-        // Validate screenshot
-        assert.ok(result.screenshot, 'Should include screenshot');
-        assert.ok(result.screenshot.startsWith('data:image/png;base64,'), 'Screenshot should be base64 PNG');
+        // Validate screenshot (second item in content array)
+        const imageContent = result.content[1];
+        assert.strictEqual(imageContent.type, 'image', 'Second item should be image');
+        assert.ok(imageContent.data, 'Should include screenshot data');
+        assert.strictEqual(imageContent.mimeType, 'image/png', 'Should be PNG image');
 
+        // Parse the JSON data (third item in content array)
+        const jsonContent = result.content[2];
+        assert.strictEqual(jsonContent.type, 'text', 'Third item should be text');
+        const diagnosticData = JSON.parse(jsonContent.text);
+        
         // Validate computed styles
-        assert.ok(result.computed_styles, 'Should include computed styles');
-        assert.strictEqual(result.computed_styles['background-color'], 'rgb(66, 133, 244)', 'Should have correct background color');
-        assert.strictEqual(result.computed_styles['width'], '400px', 'Should have correct width');
-        assert.strictEqual(result.computed_styles['height'], '60px', 'Should have correct height');
+        assert.ok(diagnosticData.computed_styles, 'Should include computed styles');
+        assert.strictEqual(diagnosticData.computed_styles['background-color'], 'rgb(66, 133, 244)', 'Should have correct background color');
+        assert.strictEqual(diagnosticData.computed_styles['width'], '400px', 'Should have correct width');
+        assert.strictEqual(diagnosticData.computed_styles['height'], '60px', 'Should have correct height');
 
         // Validate box model
-        assert.ok(result.box_model, 'Should include box model');
-        assert.ok(result.box_model.content, 'Should have content box');
-        assert.ok(result.box_model.padding, 'Should have padding box');
-        assert.ok(result.box_model.border, 'Should have border box');
-        assert.ok(result.box_model.margin, 'Should have margin box');
+        assert.ok(diagnosticData.box_model, 'Should include box model');
+        assert.ok(diagnosticData.box_model.content, 'Should have content box');
+        assert.ok(diagnosticData.box_model.padding, 'Should have padding box');
+        assert.ok(diagnosticData.box_model.border, 'Should have border box');
+        assert.ok(diagnosticData.box_model.margin, 'Should have margin box');
 
         // Validate cascade rules
-        assert.ok(Array.isArray(result.cascade_rules), 'Should include cascade rules array');
-        assert.ok(result.cascade_rules.length > 0, 'Should have at least one cascade rule');
+        assert.ok(Array.isArray(diagnosticData.cascade_rules), 'Should include cascade rules array');
+        assert.ok(diagnosticData.cascade_rules.length > 0, 'Should have at least one cascade rule');
         
-        const headerRule = result.cascade_rules.find(rule => 
+        const headerRule = diagnosticData.cascade_rules.find(rule => 
             rule.selector === '#test-header'
         );
         assert.ok(headerRule, 'Should include rule for #test-header selector');
