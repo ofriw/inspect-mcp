@@ -1,6 +1,8 @@
 export interface InspectElementArgs {
   css_selector: string;
   url: string;
+  property_groups?: string[];
+  include_all_properties?: boolean;
 }
 
 export interface Rect {
@@ -24,11 +26,22 @@ export interface CascadeRule {
   properties: Record<string, string>;
 }
 
+export interface GroupedStyles {
+  [groupName: string]: Record<string, string>;
+}
+
 export interface InspectionResult {
   screenshot: string;
   computed_styles: Record<string, string>;
+  grouped_styles?: GroupedStyles;
   cascade_rules: CascadeRule[];
   box_model: BoxModel;
+  stats?: {
+    total_properties: number;
+    filtered_properties: number;
+    total_rules: number;
+    filtered_rules: number;
+  };
 }
 
 export interface ChromeTarget {
