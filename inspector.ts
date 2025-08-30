@@ -12,7 +12,7 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
     css_selector, 
     url, 
     property_groups = DEFAULT_PROPERTY_GROUPS,
-    include_all_properties = false 
+    css_edits
   } = args;
   
   // Get or launch Chrome instance
@@ -65,6 +65,11 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
     
     const nodeId = nodeResult.nodeId;
     
+    // Apply CSS edits if provided
+    if (css_edits && Object.keys(css_edits).length > 0) {
+      await cdp.setInlineStyles(nodeId, css_edits);
+    }
+    
     // Get box model for bounds
     const boxModelResult = await cdp.send('DOM.getBoxModel', { nodeId });
     if (!boxModelResult.model) {
@@ -75,12 +80,12 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
     // Get computed styles
     const computedStylesResult = await cdp.send('CSS.getComputedStyleForNode', { nodeId });
     const allComputedStyles = convertComputedStyles(computedStylesResult.computedStyle);
-    const filteredComputedStyles = filterComputedStyles(allComputedStyles, property_groups as PropertyGroup[], include_all_properties);
+    const filteredComputedStyles = filterComputedStyles(allComputedStyles, property_groups as PropertyGroup[], false);
     
     // Get matching CSS rules (cascade)
     const matchedStylesResult = await cdp.send('CSS.getMatchedStylesForNode', { nodeId });
     const allCascadeRules = convertCascadeRules(matchedStylesResult);
-    const filteredCascadeRules = filterCascadeRules(allCascadeRules, property_groups as PropertyGroup[], include_all_properties);
+    const filteredCascadeRules = filterCascadeRules(allCascadeRules, property_groups as PropertyGroup[], false);
     
     // Highlight element with overlay
     await cdp.send('Overlay.highlightNode', {
@@ -108,9 +113,8 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
     // Clear overlay
     await cdp.send('Overlay.hideHighlight');
     
-    // Create grouped styles if filtering is applied
-    const groupedStyles = !include_all_properties ? 
-      categorizeProperties(filteredComputedStyles) : undefined;
+    // Create grouped styles
+    const groupedStyles = categorizeProperties(filteredComputedStyles);
     
     // Create stats
     const stats = {
@@ -127,6 +131,7 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
       grouped_styles: groupedStyles,
       cascade_rules: filteredCascadeRules,
       box_model: boxModel,
+      applied_edits: css_edits && Object.keys(css_edits).length > 0 ? css_edits : undefined,
       stats
     };
     

@@ -366,6 +366,18 @@ export class CDPClient {
     });
   }
 
+  async setInlineStyles(nodeId: number, styles: Record<string, string>): Promise<void> {
+    const styleText = Object.entries(styles)
+      .map(([property, value]) => `${property}: ${value}`)
+      .join('; ');
+    
+    await this.send('DOM.setAttributeValue', {
+      nodeId,
+      name: 'style',
+      value: styleText
+    });
+  }
+
   close() {
     this.ws.close();
   }

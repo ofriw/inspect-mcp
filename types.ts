@@ -2,7 +2,7 @@ export interface InspectElementArgs {
   css_selector: string;
   url: string;
   property_groups?: string[];
-  include_all_properties?: boolean;
+  css_edits?: Record<string, string>;
 }
 
 export interface Rect {
@@ -36,6 +36,7 @@ export interface InspectionResult {
   grouped_styles?: GroupedStyles;
   cascade_rules: CascadeRule[];
   box_model: BoxModel;
+  applied_edits?: Record<string, string>;
   stats?: {
     total_properties: number;
     filtered_properties: number;
