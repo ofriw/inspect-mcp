@@ -23,26 +23,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: 'inspect_element',
-        description: 'Inspects the first DOM element matching a CSS selector and returns visual and style information. Response is optimized for LLM consumption with property grouping.',
+        description: 'Inspects a DOM element on a webpage by taking a screenshot with the element highlighted and extracting its computed CSS styles. Use this when you need to visually analyze an element\'s appearance or debug styling issues. Returns both a screenshot and structured style information.',
         inputSchema: {
           type: 'object',
           properties: {
             css_selector: {
               type: 'string',
-              description: 'CSS selector to find the element',
+              description: 'Standard CSS selector to find the element. Examples: \'#submit-button\', \'.nav-item:first-child\', \'article > h1\'. Only the first matching element will be inspected.',
             },
             url: {
               type: 'string',
-              description: 'URL of the page to inspect',
+              description: 'Complete webpage URL to inspect. Must include protocol. Examples: \'https://example.com\', \'http://localhost:3000\'.',
             },
             property_groups: {
               type: 'array',
               items: { type: 'string' },
-              description: 'CSS property groups to include. Options: layout, box, flexbox, grid, typography, colors, visual, positioning, custom. Defaults to ["layout", "box", "typography", "colors"]',
+              description: 'Choose which categories of CSS properties to retrieve. Use this to focus on specific styling aspects:\n- layout: display, flex properties, grid properties\n- box: margin, padding, border, width, height\n- typography: font properties, text properties, line-height\n- colors: color, background-color, border-color\n- visual: opacity, visibility, transform, filter\n- positioning: position, top/left/right/bottom, z-index\nDefault: ["layout", "box", "typography", "colors"]',
             },
-            include_all_properties: {
-              type: 'boolean',
-              description: 'Include all CSS properties without filtering. Defaults to false. When true, property_groups is ignored.',
+            css_edits: {
+              type: 'object',
+              description: 'Test CSS changes by applying styles before taking the screenshot. Provide as key-value pairs. Example: {\'background-color\': \'#ff0000\', \'padding\': \'20px\', \'display\': \'none\'}. The screenshot will show these changes applied.',
+              additionalProperties: {
+                type: 'string'
+              }
             },
           },
           required: ['css_selector', 'url'],
@@ -67,7 +70,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       css_selector: typedArgs.css_selector as string,
       url: typedArgs.url as string,
       property_groups: typedArgs.property_groups as string[] | undefined,
-      include_all_properties: typedArgs.include_all_properties as boolean | undefined
+      css_edits: typedArgs.css_edits as Record<string, string> | undefined
     };
     
     // Validate required arguments
@@ -90,17 +93,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       box_model: result.box_model
     };
     
-    // Add grouped styles if available (more organized for LLMs)
-    if (result.grouped_styles) {
-      diagnosticData.grouped_styles = result.grouped_styles;
-      diagnosticData.computed_styles_summary = {
-        total_properties: result.stats?.total_properties || 0,
-        filtered_properties: result.stats?.filtered_properties || 0,
-        groups_requested: inspectArgs.property_groups || ['layout', 'box', 'typography', 'colors']
-      };
-    } else {
-      diagnosticData.computed_styles = result.computed_styles;
-    }
+    // Always include computed styles and grouped styles
+    diagnosticData.computed_styles = result.computed_styles;
+    diagnosticData.grouped_styles = result.grouped_styles;
+    diagnosticData.computed_styles_summary = {
+      total_properties: result.stats?.total_properties || 0,
+      filtered_properties: result.stats?.filtered_properties || 0,
+      groups_requested: inspectArgs.property_groups || ['layout', 'box', 'typography', 'colors']
+    };
     
     // Add cascade rules (filtered)
     diagnosticData.cascade_rules = result.cascade_rules;
@@ -109,6 +109,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         total_rules: result.stats.total_rules,
         filtered_rules: result.stats.filtered_rules
       };
+    }
+    
+    // Add applied CSS edits if any
+    if (result.applied_edits) {
+      diagnosticData.applied_edits = result.applied_edits;
     }
     
     return {
