@@ -449,11 +449,11 @@ test('Edge Cases Test', async (t) => {
                 property_groups: ['colors', 'typography']
             });
             
-            // Get unfiltered response
+            // Get comprehensive response with all groups
             const unfilteredResponse = await env.mcpClient.callTool('inspect_element', {
                 css_selector: '#complex-element', 
                 url: env.testUrl,
-                include_all_properties: true
+                property_groups: ['layout', 'box', 'typography', 'colors', 'visual', 'positioning', 'flexbox', 'grid', 'custom']
             });
             
             assert.ok(filteredResponse.result, 'Filtered response should work');

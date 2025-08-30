@@ -115,19 +115,19 @@ test('Property groups functionality', async (t) => {
         
         console.log('✅ Specific groups filtering works correctly');
 
-        // Test 3: Include all properties (bypass filtering)
-        console.log('Testing include_all_properties flag...');
+        // Test 3: Get comprehensive properties with all groups
+        console.log('Testing all property groups...');
         const allPropsResponse = await mcpClient.callTool('inspect_element', {
             css_selector: '#test-header',
             url: testUrl,
-            include_all_properties: true
+            property_groups: ['layout', 'box', 'typography', 'colors', 'visual', 'positioning', 'flexbox', 'grid', 'custom']
         });
 
-        assert.ok(allPropsResponse.result, 'Include all should work');
+        assert.ok(allPropsResponse.result, 'All groups should work');
         const allPropsData = JSON.parse(allPropsResponse.result.content[2].text);
         
-        // When include_all_properties is true, should still have computed_styles (not just grouped)
-        assert.ok(allPropsData.computed_styles, 'Should have computed_styles when include_all is true');
+        // With all groups, should have comprehensive computed_styles
+        assert.ok(allPropsData.computed_styles, 'Should have computed_styles with all groups');
         
         // Should have significantly more properties than filtered version
         const allPropsCount = Object.keys(allPropsData.computed_styles).length;
@@ -135,7 +135,7 @@ test('Property groups functionality', async (t) => {
         assert.ok(allPropsCount > filteredCount, 
             `All properties (${allPropsCount}) should be more than filtered (${filteredCount})`);
         
-        console.log(`✅ Include all: ${allPropsCount} properties vs ${filteredCount} filtered`);
+        console.log(`✅ All groups: ${allPropsCount} properties vs ${filteredCount} filtered`);
 
         // Test 4: Visual effects and animations group
         console.log('Testing visual effects group...');
