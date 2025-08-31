@@ -23,13 +23,46 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: 'inspect_element',
-        description: 'Inspects DOM elements on a webpage by taking a screenshot with highlighted elements and extracting computed CSS styles. Automatically finds all matching elements and calculates relationships when multiple elements match. Use for visual analysis, debugging styling issues, or validating layouts.',
+        description: `PIXEL-PERFECT CSS DEBUGGING WORKFLOW:
+
+Step 1 - INSPECT: First, analyze the current state by inspecting elements to understand layout, styling, and visual issues.
+Step 2 - IDENTIFY: Determine what needs to be changed (spacing, alignment, colors, etc.).
+Step 3 - TEST & VERIFY: Use css_edits parameter to apply changes and instantly see results in returned screenshot.
+Step 4 - ITERATE: If not perfect, refine css_edits in next call and see updated results immediately.
+Step 5 - EXTRACT: Copy successful CSS values to your source files.
+
+This tool enables the complete DevTools-like workflow: inspect → edit → verify → iterate → copy. Perfect for debugging layout issues, matching designs exactly, and achieving pixel-perfect UIs through systematic testing.
+
+WHEN TO USE:
+- "This button is misaligned" → Inspect current position → Test alignment fixes → Perfect spacing
+- "Colors don't match design" → Inspect current colors → Test design values → Verify exact match  
+- "Layout breaks on mobile" → Inspect responsive behavior → Test CSS fixes → Validate across sizes`,
         inputSchema: {
           type: 'object',
           properties: {
             css_selector: {
               type: 'string',
-              description: 'CSS selector to find element(s). Examples: \'#submit-button\', \'.nav-item\', \'button\'. If multiple elements match, relationships between them will be calculated automatically.',
+              description: `CSS selector to target element(s) for inspection and editing. 
+
+SELECTOR STRATEGY:
+- Start SPECIFIC for single elements: "#submit-button", ".main-header"
+- Use GENERAL for pattern analysis: "button", ".nav-item", ".card"
+- COMPOUND selectors for precision: ".modal .close-button", "form input[type='submit']"
+
+COMMON PATTERNS:
+- Single element fix: ".hero-title" → Perfect one element's styling
+- Multi-element alignment: "button" → Analyze spacing between all buttons  
+- Component analysis: ".card" → Check consistency across all cards
+- Responsive issues: ".sidebar" → Debug layout at different screen sizes
+- Form debugging: "input, textarea" → Inspect all form inputs together
+
+SELECTION TIPS:
+- Use browser DevTools to test selectors first
+- Multiple matches = automatic relationship analysis 
+- Be specific enough to avoid unintended matches
+- Consider ":nth-child()", ":first-of-type" for precision
+
+The selector determines the scope of your CSS debugging session.`,
             },
             url: {
               type: 'string',
@@ -38,18 +71,76 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             property_groups: {
               type: 'array',
               items: { type: 'string' },
-              description: 'Choose which categories of CSS properties to retrieve. Use this to focus on specific styling aspects:\n- layout: display, flex properties, grid properties\n- box: margin, padding, border, width, height\n- typography: font properties, text properties, line-height\n- colors: color, background-color, border-color\n- visual: opacity, visibility, transform, filter\n- positioning: position, top/left/right/bottom, z-index\nDefault: ["layout", "box", "typography", "colors"]',
+              description: `Focus on specific CSS aspects to reduce noise and speed up debugging:
+
+PROPERTY GROUPS:
+• "layout" - display, flex, grid properties (for structural issues)
+• "box" - margin, padding, border, width, height (for spacing/sizing)  
+• "typography" - font, text properties, line-height (for text styling)
+• "colors" - color, background-color, border-color (for visual styling)
+• "visual" - opacity, visibility, transform, filter (for effects)
+• "positioning" - position, top/left/right/bottom, z-index (for placement)
+
+DEBUGGING STRATEGIES:
+- Alignment issues → ["layout", "box"] → Focus on flex/grid + spacing
+- Text problems → ["typography"] → Just font styling, ignore layout noise  
+- Color mismatches → ["colors"] → Only color-related properties
+- Spacing problems → ["box"] → Margins, padding, borders only
+- Layer conflicts → ["positioning"] → Z-index, position values
+- All styling → [] (empty) → Default comprehensive view
+
+Fewer groups = faster analysis, more focused debugging. Default: ["layout", "box", "typography", "colors"]`,
             },
             css_edits: {
               type: 'object',
-              description: 'Test CSS changes by applying styles before taking the screenshot. Provide as key-value pairs. Example: {\'background-color\': \'#ff0000\', \'padding\': \'20px\', \'display\': \'none\'}. The screenshot will show these changes applied.',
+              description: `ITERATIVE CSS TESTING - Apply and see results instantly in one call!
+
+WORKFLOW: Each call with css_edits returns updated screenshot + computed styles, enabling rapid iteration:
+
+ITERATION PATTERN:
+1st call: Inspect without css_edits to see current state
+2nd call: Apply initial fix → {"margin-left": "16px"} → See if spacing improves  
+3rd call: Refine based on result → {"margin-left": "24px", "margin-top": "8px"} → Perfect alignment
+Final: Copy working values to source code
+
+COMMON FIXES:
+- Alignment: {"align-self": "center", "justify-self": "start"}
+- Spacing: {"margin": "16px", "padding": "12px 24px"} 
+- Colors: {"color": "#333", "background-color": "#f5f5f5"}
+- Layout: {"display": "flex", "flex-direction": "column", "gap": "8px"}
+- Debug: {"border": "2px solid red", "background": "rgba(255,0,0,0.1)"}
+
+PROGRESSIVE REFINEMENT:
+Start small → {"margin-top": "8px"} → If not enough, increase → {"margin-top": "16px"} → Perfect!
+
+Each call shows immediate visual feedback - no need for separate inspection calls when testing changes.`,
               additionalProperties: {
                 type: 'string'
               }
             },
             limit: {
               type: 'number',
-              description: 'Maximum number of elements to inspect when multiple elements match the selector. Defaults to 10.',
+              description: `Control scope when multiple elements match selector.
+
+MULTI-ELEMENT DEBUGGING STRATEGY:
+• Start with limit: 3-5 for focused analysis of key elements
+• Use limit: 10+ for comprehensive pattern analysis across components
+• Reduce limit if screenshot/response becomes too large
+
+ITERATION SIGNALS - When to stop refining css_edits:
+✅ Visual spacing matches design specifications exactly
+✅ Elements align properly with grid/layout system  
+✅ Colors match design tokens/brand guidelines
+✅ Text is readable and properly sized
+✅ Interactive states (hover, focus) work correctly
+
+MULTI-STEP FIX WORKFLOW:
+1. Broad inspection (limit: 10) → Identify patterns
+2. Focused testing (limit: 3) → Test fixes on key elements  
+3. Verify consistency (limit: 10) → Ensure fix works across all instances
+4. Extract CSS → Copy working styles to source code
+
+Success = When visual result matches intended design and all elements behave consistently.`,
               minimum: 1,
               maximum: 20
             }
