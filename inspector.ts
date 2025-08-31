@@ -1,4 +1,4 @@
-import type { InspectElementArgs, InspectionResult, BoxModel, CascadeRule, GroupedStyles } from './types.js';
+import type { InspectElementArgs, InspectionResult, MultiInspectionResult, ElementInspection, ElementRelationship, BoxModel, CascadeRule, GroupedStyles } from './types.js';
 import { ensureChromeWithCDP, connectToTarget, CDPClient } from './cdp-client.js';
 import { 
   DEFAULT_PROPERTY_GROUPS, 
@@ -7,12 +7,52 @@ import {
   type PropertyGroup 
 } from './property-groups.js';
 
-export async function inspectElement(args: InspectElementArgs): Promise<InspectionResult> {
+// Visual constants for multi-element highlighting
+const HIGHLIGHT_COLORS = [
+  { r: 111, g: 168, b: 220, a: 0.3 }, // Blue
+  { r: 147, g: 196, b: 125, a: 0.3 }, // Green
+  { r: 255, g: 229, b: 153, a: 0.3 }, // Yellow
+  { r: 246, g: 178, b: 107, a: 0.3 }, // Orange
+  { r: 220, g: 111, b: 168, a: 0.3 }, // Purple
+];
+
+// Pixel tolerance for alignment detection
+const ALIGNMENT_TOLERANCE = 1;
+
+async function highlightElements(cdp: CDPClient, nodeIds: number[]): Promise<void> {
+  for (let i = 0; i < nodeIds.length; i++) {
+    const colorIndex = i % HIGHLIGHT_COLORS.length;
+    await cdp.send('Overlay.highlightNode', {
+      nodeId: nodeIds[i],
+      highlightConfig: {
+        contentColor: HIGHLIGHT_COLORS[colorIndex],
+        paddingColor: HIGHLIGHT_COLORS[(colorIndex + 1) % HIGHLIGHT_COLORS.length],
+        borderColor: HIGHLIGHT_COLORS[(colorIndex + 2) % HIGHLIGHT_COLORS.length],
+        marginColor: HIGHLIGHT_COLORS[(colorIndex + 3) % HIGHLIGHT_COLORS.length],
+        showInfo: true,
+        showRulers: i === 0, // Only show rulers on first element to avoid clutter
+        showExtensionLines: true
+      }
+    });
+  }
+}
+
+/**
+ * Inspects DOM elements on a webpage, automatically detecting single vs multiple elements.
+ * Provides spatial relationship analysis for multiple elements - essential for AI agents
+ * building pixel-perfect frontends. Uses temporary DOM attributes for element identification
+ * to handle dynamic content and complex selectors.
+ * 
+ * @param args - Inspection parameters including selector, URL, property groups, and limits
+ * @returns Single element result or multi-element result with spatial relationships
+ */
+export async function inspectElement(args: InspectElementArgs): Promise<InspectionResult | MultiInspectionResult> {
   const { 
     css_selector, 
     url, 
     property_groups = DEFAULT_PROPERTY_GROUPS,
-    css_edits
+    css_edits,
+    limit = 10
   } = args;
   
   // Get or launch Chrome instance
@@ -52,18 +92,182 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
         await new Promise(resolve => setTimeout(resolve, 500 * attempts));
       }
     }
-    
-    // Find element (querySelector returns first matching element)
-    const nodeResult = await cdp.send('DOM.querySelector', {
-      nodeId: doc.root.nodeId,
-      selector: css_selector
+
+    // Find all matching elements using Runtime.evaluate
+    // Note: We use temporary data-inspect-id attributes to handle complex selectors
+    // and ensure we get the exact same elements when querying for node IDs
+    const evalResult = await cdp.send('Runtime.evaluate', {
+      expression: `
+        (function() {
+          try {
+            const elements = Array.from(document.querySelectorAll(${JSON.stringify(css_selector)}));
+            if (elements.length === 0) return { error: 'No elements found' };
+            
+            // Mark elements with unique attributes and return info
+            return elements.slice(0, ${limit}).map((el, i) => {
+              const uniqueId = '_inspect_' + Date.now() + '_' + i;
+              el.setAttribute('data-inspect-id', uniqueId);
+              return {
+                index: i,
+                uniqueId: uniqueId,
+                tagName: el.tagName,
+                id: el.id || null,
+                className: el.className || null
+              };
+            });
+          } catch (e) {
+            return { error: e.message };
+          }
+        })()
+      `,
+      returnByValue: true
     });
     
-    if (!nodeResult.nodeId) {
+    if (evalResult.exceptionDetails) {
+      throw new Error(`Invalid CSS selector: ${css_selector}`);
+    }
+    
+    const result = evalResult.result.value;
+    if (result.error) {
       throw new Error(`Element not found: ${css_selector}`);
     }
     
-    const nodeId = nodeResult.nodeId;
+    // Get node IDs for each marked element
+    const nodeIds: number[] = [];
+    for (const elementInfo of result) {
+      const nodeResult = await cdp.send('DOM.querySelector', {
+        nodeId: doc.root.nodeId,
+        selector: `[data-inspect-id="${elementInfo.uniqueId}"]`
+      });
+      
+      if (nodeResult.nodeId) {
+        nodeIds.push(nodeResult.nodeId);
+      }
+    }
+    
+    if (nodeIds.length === 0) {
+      throw new Error(`Element not found: ${css_selector}`);
+    }
+    
+    // Clean up the temporary attributes
+    await cdp.send('Runtime.evaluate', {
+      expression: `
+        document.querySelectorAll('[data-inspect-id]').forEach(el => {
+          el.removeAttribute('data-inspect-id');
+        });
+      `
+    });
+    
+    if (nodeIds.length === 1) {
+      // Single element - return simple structure
+      return await inspectSingleElement(
+        css_selector,
+        nodeIds[0], 
+        cdp, 
+        property_groups as PropertyGroup[], 
+        css_edits
+      );
+    } else {
+      // Multiple elements - return with relationships
+      return await inspectMultipleElements(
+        css_selector,
+        nodeIds, 
+        cdp, 
+        property_groups as PropertyGroup[], 
+        css_edits
+      );
+    }
+    
+  } finally {
+    cdp.close();
+  }
+}
+
+async function inspectSingleElement(
+  selector: string,
+  nodeId: number,
+  cdp: CDPClient,
+  property_groups: PropertyGroup[],
+  css_edits?: Record<string, string>
+): Promise<InspectionResult> {
+  
+  // Apply CSS edits if provided
+  if (css_edits && Object.keys(css_edits).length > 0) {
+    await cdp.setInlineStyles(nodeId, css_edits);
+  }
+  
+  // Get box model for bounds
+  const boxModelResult = await cdp.send('DOM.getBoxModel', { nodeId });
+  if (!boxModelResult.model) {
+    throw new Error(`Unable to get box model for element: ${selector}. Element may not be visible.`);
+  }
+  const boxModel = convertBoxModel(boxModelResult.model);
+  
+  // Get computed styles
+  const computedStylesResult = await cdp.send('CSS.getComputedStyleForNode', { nodeId });
+  const allComputedStyles = convertComputedStyles(computedStylesResult.computedStyle);
+  const filteredComputedStyles = filterComputedStyles(allComputedStyles, property_groups, false);
+  
+  // Get matching CSS rules (cascade)
+  const matchedStylesResult = await cdp.send('CSS.getMatchedStylesForNode', { nodeId });
+  const allCascadeRules = convertCascadeRules(matchedStylesResult);
+  const filteredCascadeRules = filterCascadeRules(allCascadeRules, property_groups, false);
+  
+  // Highlight element with overlay
+  await highlightElements(cdp, [nodeId]);
+  
+  // Capture full viewport screenshot with overlay
+  const screenshotResult = await cdp.send('Page.captureScreenshot', {
+    format: 'png'
+  });
+  
+  if (!screenshotResult.data) {
+    throw new Error('Failed to capture screenshot. The page may not be loaded or visible.');
+  }
+  
+  // Clear overlay
+  await cdp.send('Overlay.hideHighlight');
+  
+  // Create grouped styles
+  const groupedStyles = categorizeProperties(filteredComputedStyles);
+  
+  // Create stats
+  const stats = {
+    total_properties: Object.keys(allComputedStyles).length,
+    filtered_properties: Object.keys(filteredComputedStyles).length,
+    total_rules: allCascadeRules.length,
+    filtered_rules: filteredCascadeRules.length
+  };
+  
+  return {
+    screenshot: `data:image/png;base64,${screenshotResult.data}`,
+    computed_styles: filteredComputedStyles,
+    grouped_styles: groupedStyles,
+    cascade_rules: filteredCascadeRules,
+    box_model: boxModel,
+    applied_edits: css_edits && Object.keys(css_edits).length > 0 ? css_edits : undefined,
+    stats
+  };
+}
+
+async function inspectMultipleElements(
+  selector: string,
+  nodeIds: number[],
+  cdp: CDPClient,
+  property_groups: PropertyGroup[],
+  css_edits?: Record<string, string>
+): Promise<MultiInspectionResult> {
+  const elements: ElementInspection[] = [];
+  const nodeData: Array<{ selector: string, nodeId: number, boxModel: BoxModel }> = [];
+  
+  let totalProperties = 0;
+  let filteredProperties = 0;
+  let totalRules = 0;
+  let filteredRules = 0;
+  
+  // Process each element
+  for (let i = 0; i < nodeIds.length; i++) {
+    const nodeId = nodeIds[i];
     
     // Apply CSS edits if provided
     if (css_edits && Object.keys(css_edits).length > 0) {
@@ -73,71 +277,176 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
     // Get box model for bounds
     const boxModelResult = await cdp.send('DOM.getBoxModel', { nodeId });
     if (!boxModelResult.model) {
-      throw new Error(`Unable to get box model for element: ${css_selector}. Element may not be visible.`);
+      throw new Error(`Unable to get box model for element ${i + 1} of ${nodeIds.length}: ${selector}. Element may not be visible.`);
     }
     const boxModel = convertBoxModel(boxModelResult.model);
+    
+    // Store for distance calculations (already done above)
     
     // Get computed styles
     const computedStylesResult = await cdp.send('CSS.getComputedStyleForNode', { nodeId });
     const allComputedStyles = convertComputedStyles(computedStylesResult.computedStyle);
-    const filteredComputedStyles = filterComputedStyles(allComputedStyles, property_groups as PropertyGroup[], false);
+    const filteredComputedStyles = filterComputedStyles(allComputedStyles, property_groups, false);
     
     // Get matching CSS rules (cascade)
     const matchedStylesResult = await cdp.send('CSS.getMatchedStylesForNode', { nodeId });
     const allCascadeRules = convertCascadeRules(matchedStylesResult);
-    const filteredCascadeRules = filterCascadeRules(allCascadeRules, property_groups as PropertyGroup[], false);
-    
-    // Highlight element with overlay
-    await cdp.send('Overlay.highlightNode', {
-      nodeId,
-      highlightConfig: {
-        contentColor: { r: 111, g: 168, b: 220, a: 0.3 },
-        paddingColor: { r: 147, g: 196, b: 125, a: 0.3 },
-        borderColor: { r: 255, g: 229, b: 153, a: 0.3 },
-        marginColor: { r: 246, g: 178, b: 107, a: 0.3 },
-        showInfo: true,
-        showRulers: true,
-        showExtensionLines: true
-      }
-    });
-    
-    // Capture full viewport screenshot with overlay
-    const screenshotResult = await cdp.send('Page.captureScreenshot', {
-      format: 'png'
-    });
-    
-    if (!screenshotResult.data) {
-      throw new Error('Failed to capture screenshot. The page may not be loaded or visible.');
-    }
-    
-    // Clear overlay
-    await cdp.send('Overlay.hideHighlight');
+    const filteredCascadeRules = filterCascadeRules(allCascadeRules, property_groups, false);
     
     // Create grouped styles
     const groupedStyles = categorizeProperties(filteredComputedStyles);
     
-    // Create stats
-    const stats = {
-      total_properties: Object.keys(allComputedStyles).length,
-      filtered_properties: Object.keys(filteredComputedStyles).length,
-      total_rules: allCascadeRules.length,
-      filtered_rules: filteredCascadeRules.length
-    };
-    
-    
-    return {
-      screenshot: `data:image/png;base64,${screenshotResult.data}`,
+    // Add to elements array
+    elements.push({
+      selector: `${selector}[${i}]`, // Add index for clarity
       computed_styles: filteredComputedStyles,
       grouped_styles: groupedStyles,
       cascade_rules: filteredCascadeRules,
       box_model: boxModel,
-      applied_edits: css_edits && Object.keys(css_edits).length > 0 ? css_edits : undefined,
-      stats
-    };
+      applied_edits: css_edits && Object.keys(css_edits).length > 0 ? css_edits : undefined
+    });
     
-  } finally {
-    cdp.close();
+    // Store for distance calculations
+    nodeData.push({ selector: `${selector}[${i}]`, nodeId, boxModel });
+    
+    // Accumulate stats
+    totalProperties += Object.keys(allComputedStyles).length;
+    filteredProperties += Object.keys(filteredComputedStyles).length;
+    totalRules += allCascadeRules.length;
+    filteredRules += filteredCascadeRules.length;
   }
+  
+  // Highlight all elements with different colors
+  await highlightElements(cdp, nodeIds);
+  
+  // Capture screenshot with all overlays
+  const screenshotResult = await cdp.send('Page.captureScreenshot', {
+    format: 'png'
+  });
+  
+  if (!screenshotResult.data) {
+    throw new Error('Failed to capture screenshot. The page may not be loaded or visible.');
+  }
+  
+  // Clear all overlays
+  await cdp.send('Overlay.hideHighlight');
+  
+  // Calculate relationships between elements
+  const relationships = calculateElementRelationships(nodeData);
+  
+  const result: MultiInspectionResult = {
+    elements,
+    relationships,
+    screenshot: `data:image/png;base64,${screenshotResult.data}`,
+    stats: {
+      total_properties: totalProperties,
+      filtered_properties: filteredProperties,
+      total_rules: totalRules,
+      filtered_rules: filteredRules
+    }
+  };
+  
+  return result;
+}
+
+/**
+ * Calculates spatial relationships between multiple DOM elements.
+ * Essential for AI agents to understand layout patterns and apply consistent spacing.
+ * Uses O(n²) pairwise comparison - acceptable given element limits (max 20, default 10).
+ * 
+ * @param nodeData - Array of elements with selectors, node IDs, and box models
+ * @returns Array of pairwise relationships with distances and alignment data
+ */
+function calculateElementRelationships(
+  nodeData: Array<{ selector: string, nodeId: number, boxModel: BoxModel }>
+): ElementRelationship[] {
+  const relationships: ElementRelationship[] = [];
+  
+  // Calculate relationships between each pair of elements
+  for (let i = 0; i < nodeData.length; i++) {
+    for (let j = i + 1; j < nodeData.length; j++) {
+      const element1 = nodeData[i];
+      const element2 = nodeData[j];
+      
+      const relationship = calculatePairwiseRelationship(element1, element2);
+      relationships.push(relationship);
+    }
+  }
+  
+  return relationships;
+}
+
+function calculatePairwiseRelationship(
+  element1: { selector: string, nodeId: number, boxModel: BoxModel },
+  element2: { selector: string, nodeId: number, boxModel: BoxModel }
+): ElementRelationship {
+  const box1 = element1.boxModel.border; // Use border box for measurements
+  const box2 = element2.boxModel.border;
+  
+  // Calculate element centers
+  const center1 = {
+    x: box1.x + box1.width / 2,
+    y: box1.y + box1.height / 2
+  };
+  const center2 = {
+    x: box2.x + box2.width / 2,
+    y: box2.y + box2.height / 2
+  };
+  
+  // Calculate distances
+  const centerToCenterDistance = Math.sqrt(
+    Math.pow(center2.x - center1.x, 2) + Math.pow(center2.y - center1.y, 2)
+  );
+  
+  // Calculate edge-to-edge distances (most useful for spacing)
+  let horizontalDistance = 0;
+  let verticalDistance = 0;
+  
+  // Horizontal distance (gaps between left/right edges)
+  if (box1.x + box1.width < box2.x) {
+    // Element 1 is to the left of element 2
+    horizontalDistance = box2.x - (box1.x + box1.width);
+  } else if (box2.x + box2.width < box1.x) {
+    // Element 2 is to the left of element 1
+    horizontalDistance = box1.x - (box2.x + box2.width);
+  } else {
+    // Elements overlap horizontally
+    horizontalDistance = 0;
+  }
+  
+  // Vertical distance (gaps between top/bottom edges)
+  if (box1.y + box1.height < box2.y) {
+    // Element 1 is above element 2
+    verticalDistance = box2.y - (box1.y + box1.height);
+  } else if (box2.y + box2.height < box1.y) {
+    // Element 2 is above element 1
+    verticalDistance = box1.y - (box2.y + box2.height);
+  } else {
+    // Elements overlap vertically
+    verticalDistance = 0;
+  }
+  
+  // Calculate alignment (with tolerance for "close enough")
+  const tolerance = ALIGNMENT_TOLERANCE;
+  const alignment = {
+    top: Math.abs(box1.y - box2.y) <= tolerance,
+    bottom: Math.abs((box1.y + box1.height) - (box2.y + box2.height)) <= tolerance,
+    left: Math.abs(box1.x - box2.x) <= tolerance,
+    right: Math.abs((box1.x + box1.width) - (box2.x + box2.width)) <= tolerance,
+    vertical_center: Math.abs(center1.y - center2.y) <= tolerance,
+    horizontal_center: Math.abs(center1.x - center2.x) <= tolerance
+  };
+  
+  return {
+    from: element1.selector,
+    to: element2.selector,
+    distance: {
+      horizontal: Math.round(horizontalDistance),
+      vertical: Math.round(verticalDistance),
+      center_to_center: Math.round(centerToCenterDistance)
+    },
+    alignment
+  };
 }
 
 function convertBoxModel(cdpBoxModel: any): BoxModel {

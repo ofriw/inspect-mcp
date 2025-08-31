@@ -1,3 +1,5 @@
+import type { GroupedStyles } from './types.js';
+
 export const CSS_PROPERTY_GROUPS = {
   layout: [
     'display', 'visibility', 'float', 'clear', 'position', 'z-index',
@@ -119,8 +121,8 @@ export function shouldIncludeProperty(
   return allowedProperties.includes(propertyName);
 }
 
-export function categorizeProperties(properties: Record<string, string>): Record<PropertyGroup, Record<string, string>> {
-  const categorized: Record<PropertyGroup, Record<string, string>> = {
+export function categorizeProperties(properties: Record<string, string>): GroupedStyles {
+  const categorized: GroupedStyles = {
     layout: {},
     box: {},
     flexbox: {},

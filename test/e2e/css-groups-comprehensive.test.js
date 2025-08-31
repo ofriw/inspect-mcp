@@ -431,7 +431,7 @@ test('Edge Cases Test', async (t) => {
             const data = JSON.parse(response.result.content[2].text);
             
             // Should have many properties but still filtered
-            const stats = data.computed_styles_summary;
+            const stats = data.stats;
             assert.ok(stats, 'Should have filtering stats');
             assert.ok(stats.total_properties > 0, 'Should have total properties count');
             assert.ok(stats.filtered_properties > 0, 'Should have filtered properties count');
@@ -466,7 +466,7 @@ test('Edge Cases Test', async (t) => {
             const filteredSize = JSON.stringify(filteredResponse).length;
             const unfilteredSize = JSON.stringify(unfilteredResponse).length;
             
-            const filteredPropCount = filteredData.computed_styles_summary?.filtered_properties || 0;
+            const filteredPropCount = filteredData.stats?.filtered_properties || 0;
             const unfilteredPropCount = Object.keys(unfilteredData.computed_styles).length;
             
             assert.ok(filteredSize < unfilteredSize, 'Filtered response should be smaller');

@@ -23,13 +23,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: 'inspect_element',
-        description: 'Inspects a DOM element on a webpage by taking a screenshot with the element highlighted and extracting its computed CSS styles. Use this when you need to visually analyze an element\'s appearance or debug styling issues. Returns both a screenshot and structured style information.',
+        description: 'Inspects DOM elements on a webpage by taking a screenshot with highlighted elements and extracting computed CSS styles. Automatically finds all matching elements and calculates relationships when multiple elements match. Use for visual analysis, debugging styling issues, or validating layouts.',
         inputSchema: {
           type: 'object',
           properties: {
             css_selector: {
               type: 'string',
-              description: 'Standard CSS selector to find the element. Examples: \'#submit-button\', \'.nav-item:first-child\', \'article > h1\'. Only the first matching element will be inspected.',
+              description: 'CSS selector to find element(s). Examples: \'#submit-button\', \'.nav-item\', \'button\'. If multiple elements match, relationships between them will be calculated automatically.',
             },
             url: {
               type: 'string',
@@ -47,6 +47,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 type: 'string'
               }
             },
+            limit: {
+              type: 'number',
+              description: 'Maximum number of elements to inspect when multiple elements match the selector. Defaults to 10.',
+              minimum: 1,
+              maximum: 20
+            }
           },
           required: ['css_selector', 'url'],
         },
@@ -70,7 +76,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       css_selector: typedArgs.css_selector as string,
       url: typedArgs.url as string,
       property_groups: typedArgs.property_groups as string[] | undefined,
-      css_edits: typedArgs.css_edits as Record<string, string> | undefined
+      css_edits: typedArgs.css_edits as Record<string, string> | undefined,
+      limit: typedArgs.limit as number | undefined
     };
     
     // Validate required arguments
@@ -86,41 +93,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Extract base64 data from data URL for image block
     const base64Data = result.screenshot.replace(/^data:image\/png;base64,/, '');
     
-    // Create structured diagnostic data object
-    const diagnosticData: any = {
-      selector: inspectArgs.css_selector,
-      url: inspectArgs.url,
-      box_model: result.box_model
-    };
+    // Check if this is a multi-element result
+    const isMultiElement = 'elements' in result;
     
-    // Always include computed styles and grouped styles
-    diagnosticData.computed_styles = result.computed_styles;
-    diagnosticData.grouped_styles = result.grouped_styles;
-    diagnosticData.computed_styles_summary = {
-      total_properties: result.stats?.total_properties || 0,
-      filtered_properties: result.stats?.filtered_properties || 0,
-      groups_requested: inspectArgs.property_groups || ['layout', 'box', 'typography', 'colors']
-    };
+    // Create minimal diagnostic data (no empty arrays/objects)
+    const diagnosticData: any = { ...result };
+    delete diagnosticData.screenshot; // Don't duplicate in diagnostic
     
-    // Add cascade rules (filtered)
-    diagnosticData.cascade_rules = result.cascade_rules;
-    if (result.stats) {
-      diagnosticData.cascade_rules_summary = {
-        total_rules: result.stats.total_rules,
-        filtered_rules: result.stats.filtered_rules
-      };
-    }
-    
-    // Add applied CSS edits if any
-    if (result.applied_edits) {
-      diagnosticData.applied_edits = result.applied_edits;
-    }
+    const elementText = isMultiElement 
+      ? `Inspected ${result.elements.length} elements: ${inspectArgs.css_selector}`
+      : `Inspected element: ${inspectArgs.css_selector}`;
     
     return {
       content: [
         {
           type: 'text',
-          text: `Inspected element: ${inspectArgs.css_selector}`
+          text: elementText
         },
         {
           type: 'image',

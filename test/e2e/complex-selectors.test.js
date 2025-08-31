@@ -128,14 +128,19 @@ test('Complex CSS selectors', async (t) => {
             
             const diagnosticData = JSON.parse(response.result.content[2].text);
             assert.ok(response.result.content[1].type === 'image', `${testCase.name} should include screenshot`);
-            assert.ok(diagnosticData.grouped_styles, `${testCase.name} should include grouped styles`);
-            assert.ok(diagnosticData.box_model, `${testCase.name} should include box model`);
+            
+            // Handle both single and multi-element responses
+            const isMultiElement = diagnosticData.elements !== undefined;
+            const elementData = isMultiElement ? diagnosticData.elements[0] : diagnosticData;
+            
+            assert.ok(elementData.grouped_styles, `${testCase.name} should include grouped styles`);
+            assert.ok(elementData.box_model, `${testCase.name} should include box model`);
 
             // Check expected properties in grouped styles
             for (const [property, expectedValue] of Object.entries(testCase.expectedProperties)) {
                 // Find property in the appropriate group
                 let actualValue = null;
-                for (const group of Object.values(diagnosticData.grouped_styles)) {
+                for (const group of Object.values(elementData.grouped_styles)) {
                     if (group[property]) {
                         actualValue = group[property];
                         break;

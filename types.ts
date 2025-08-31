@@ -3,6 +3,7 @@ export interface InspectElementArgs {
   url: string;
   property_groups?: string[];
   css_edits?: Record<string, string>;
+  limit?: number;
 }
 
 export interface Rect {
@@ -37,6 +38,49 @@ export interface InspectionResult {
   cascade_rules: CascadeRule[];
   box_model: BoxModel;
   applied_edits?: Record<string, string>;
+  stats?: {
+    total_properties: number;
+    filtered_properties: number;
+    total_rules: number;
+    filtered_rules: number;
+  };
+}
+
+export interface ElementDistance {
+  horizontal: number;  // pixels between nearest horizontal edges
+  vertical: number;    // pixels between nearest vertical edges
+  center_to_center: number;  // diagonal distance between element centers
+}
+
+export interface ElementAlignment {
+  top: boolean;     // top edges aligned
+  bottom: boolean;  // bottom edges aligned
+  left: boolean;    // left edges aligned
+  right: boolean;   // right edges aligned
+  vertical_center: boolean;   // vertical centers aligned
+  horizontal_center: boolean; // horizontal centers aligned
+}
+
+export interface ElementRelationship {
+  from: string;  // first element selector
+  to: string;    // second element selector
+  distance: ElementDistance;
+  alignment: ElementAlignment;
+}
+
+export interface ElementInspection {
+  selector: string;
+  computed_styles: Record<string, string>;
+  grouped_styles?: GroupedStyles;
+  cascade_rules: CascadeRule[];
+  box_model: BoxModel;
+  applied_edits?: Record<string, string>;
+}
+
+export interface MultiInspectionResult {
+  elements: ElementInspection[];
+  relationships?: ElementRelationship[];
+  screenshot: string;
   stats?: {
     total_properties: number;
     filtered_properties: number;

@@ -84,11 +84,11 @@ test('Property groups functionality', async (t) => {
         assert.ok(defaultData.grouped_styles.colors, 'Should have colors group');
         
         // Should have filtering stats
-        assert.ok(defaultData.computed_styles_summary, 'Should have filtering summary');
-        assert.ok(defaultData.computed_styles_summary.total_properties > 0, 'Should report total properties');
-        assert.ok(defaultData.computed_styles_summary.filtered_properties > 0, 'Should report filtered properties');
+        assert.ok(defaultData.stats, 'Should have filtering summary');
+        assert.ok(defaultData.stats.total_properties > 0, 'Should report total properties');
+        assert.ok(defaultData.stats.filtered_properties > 0, 'Should report filtered properties');
         
-        console.log(`✅ Default filtering: ${defaultData.computed_styles_summary.total_properties} → ${defaultData.computed_styles_summary.filtered_properties} properties`);
+        console.log(`✅ Default filtering: ${defaultData.stats.total_properties} → ${defaultData.stats.filtered_properties} properties`);
 
         // Test 2: Specific groups only
         console.log('Testing specific property groups...');
@@ -131,7 +131,7 @@ test('Property groups functionality', async (t) => {
         
         // Should have significantly more properties than filtered version
         const allPropsCount = Object.keys(allPropsData.computed_styles).length;
-        const filteredCount = defaultData.computed_styles_summary.filtered_properties;
+        const filteredCount = defaultData.stats.filtered_properties;
         assert.ok(allPropsCount > filteredCount, 
             `All properties (${allPropsCount}) should be more than filtered (${filteredCount})`);
         
@@ -165,7 +165,11 @@ test('Property groups functionality', async (t) => {
         assert.ok(flexboxResponse.result, 'Flexbox group should work');
         const flexboxData = JSON.parse(flexboxResponse.result.content[2].text);
         
-        assert.ok(flexboxData.grouped_styles, 'Should have grouped styles');
+        // Handle both single and multi-element responses
+        const isMultiElement = flexboxData.elements !== undefined;
+        const elementData = isMultiElement ? flexboxData.elements[0] : flexboxData;
+        
+        assert.ok(elementData.grouped_styles, 'Should have grouped styles');
         
         console.log('✅ Flexbox group works');
 
