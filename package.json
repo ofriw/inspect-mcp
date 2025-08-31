@@ -1,11 +1,11 @@
 {
-  "name": "cdp-inspector",
+  "name": "inspect-mcp",
   "version": "0.1.0",
   "description": "MCP server for DOM element inspection via Chrome DevTools Protocol",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "cdp-inspector": "dist/index.js"
+    "inspect-mcp": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",

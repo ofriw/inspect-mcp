@@ -1,4 +1,4 @@
-# CDP Inspector
+# Inspect MCP
 
 MCP server for DOM element inspection via Chrome DevTools Protocol.
 
@@ -43,7 +43,7 @@ Add to your MCP client config (e.g., Claude Desktop):
 ```json
 {
   "mcpServers": {
-    "cdp-inspector": {
+    "inspect-mcp": {
       "command": "node",
       "args": ["/absolute/path/to/inspect-mcp/dist/index.js"],
       "transport": "stdio"

@@ -8,7 +8,7 @@ import type { InspectElementArgs } from './types.js';
 
 const server = new Server(
   {
-    name: 'cdp-inspector',
+    name: 'inspect-mcp',
     version: '0.1.0',
   },
   {
