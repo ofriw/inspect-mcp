@@ -4,6 +4,9 @@ export interface InspectElementArgs {
   property_groups?: string[];
   css_edits?: Record<string, string>;
   limit?: number;
+  autoCenter?: boolean;  // Default: true - automatically center elements in viewport
+  autoZoom?: boolean;    // Default: true - automatically zoom to optimal size
+  zoomFactor?: number;   // Override automatic zoom calculation (0.5-3.0)
 }
 
 export interface Rect {
@@ -31,6 +34,31 @@ export interface GroupedStyles {
   [groupName: string]: Record<string, string>;
 }
 
+export interface ElementPosition {
+  centerX: number;
+  centerY: number;
+  width: number;
+  height: number;
+}
+
+export interface ViewportInfo {
+  width: number;
+  height: number;
+  deviceScaleFactor: number;
+  mobile: boolean;
+}
+
+export interface ViewportAdjustments {
+  original_position?: {
+    centerX: number;
+    centerY: number;
+  };
+  original_positions?: ElementPosition[];  // For multi-element inspections
+  centered: boolean;
+  zoom_factor: number;
+  original_viewport: ViewportInfo;
+}
+
 export interface InspectionResult {
   screenshot: string;
   computed_styles: Record<string, string>;
@@ -38,6 +66,7 @@ export interface InspectionResult {
   cascade_rules: CascadeRule[];
   box_model: BoxModel;
   applied_edits?: Record<string, string>;
+  viewport_adjustments?: ViewportAdjustments;
   stats?: {
     total_properties: number;
     filtered_properties: number;
@@ -81,6 +110,7 @@ export interface MultiInspectionResult {
   elements: ElementInspection[];
   relationships?: ElementRelationship[];
   screenshot: string;
+  viewport_adjustments?: ViewportAdjustments;
   stats?: {
     total_properties: number;
     filtered_properties: number;

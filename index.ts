@@ -143,6 +143,75 @@ MULTI-STEP FIX WORKFLOW:
 Success = When visual result matches intended design and all elements behave consistently.`,
               minimum: 1,
               maximum: 20
+            },
+            autoCenter: {
+              type: 'boolean',
+              description: `AUTOMATIC ELEMENT CENTERING - Optimizes visual inspection for AI analysis.
+
+CENTERING BENEFITS:
+• Places elements in viewport center where LLMs focus attention naturally
+• Ensures small elements are prominently displayed for better analysis  
+• Reduces need to scroll through screenshots to find inspected elements
+• Improves accuracy of visual debugging by positioning elements optimally
+
+DEFAULT BEHAVIOR: 
+• true (recommended) - Automatically centers elements before screenshot
+• false - Elements remain in original position
+
+WHEN TO DISABLE:
+- Analyzing layout context where element position relative to siblings matters
+- Debugging scroll-dependent behaviors or sticky/fixed positioning
+- When element position itself is the issue being investigated
+
+Modern LLMs exhibit center-bias in visual attention - centering elements significantly improves inspection accuracy.`,
+              default: true
+            },
+            autoZoom: {
+              type: 'boolean', 
+              description: `INTELLIGENT ZOOM OPTIMIZATION - Automatically adjusts viewport scale for optimal element visibility.
+
+ZOOM BENEFITS:
+• Small elements (buttons, icons) are enlarged for detailed inspection
+• Large elements are scaled down to fit viewport while maintaining detail
+• Ensures consistent element visibility regardless of original size
+• Optimizes pixel density for clear CSS measurement analysis
+
+ZOOM LOGIC:
+• Elements <10% of viewport → Zoom in (up to 3x) for better visibility
+• Elements >80% of viewport → Zoom out (down to 0.5x) to show full element
+• Elements 10-80% → No zoom adjustment needed
+
+DEFAULT BEHAVIOR:
+• true (recommended) - Automatic intelligent scaling
+• false - Elements shown at original browser zoom level
+
+OVERRIDE: Use zoomFactor parameter to manually control zoom level.
+
+Perfect for debugging tiny UI elements or ensuring large components fit in screenshot view.`,
+              default: true
+            },
+            zoomFactor: {
+              type: 'number',
+              description: `MANUAL ZOOM OVERRIDE - Explicitly set viewport scale factor.
+
+ZOOM LEVELS:
+• 0.5 - 50% zoom (fit large elements, see more context)
+• 1.0 - 100% normal browser zoom  
+• 1.5 - 150% zoom (enlarge medium elements)
+• 2.0 - 200% zoom (detailed view of small elements)  
+• 3.0 - 300% maximum zoom (pixel-perfect inspection)
+
+WHEN TO USE:
+- Override autoZoom when you need specific magnification level
+- Debugging pixel-perfect alignment at high zoom levels
+- Consistent zoom across multiple inspection calls for comparison
+- Custom zoom for specific design requirements
+
+PRECEDENCE: When provided, overrides autoZoom calculations completely.
+
+Range: 0.5 to 3.0 (enforced for screenshot quality and performance)`,
+              minimum: 0.5,
+              maximum: 3.0
             }
           },
           required: ['css_selector', 'url'],
@@ -168,7 +237,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       url: typedArgs.url as string,
       property_groups: typedArgs.property_groups as string[] | undefined,
       css_edits: typedArgs.css_edits as Record<string, string> | undefined,
-      limit: typedArgs.limit as number | undefined
+      limit: typedArgs.limit as number | undefined,
+      autoCenter: typedArgs.autoCenter as boolean | undefined,
+      autoZoom: typedArgs.autoZoom as boolean | undefined,
+      zoomFactor: typedArgs.zoomFactor as number | undefined
     };
     
     // Validate required arguments
