@@ -165,7 +165,7 @@ async function main() {
       // Multi-element layout
       {
         name: 'multi-element-layout', 
-        selector: '.test-button',
+        selector: '.nested-item',
         url: testPageUrl,
         options: { limit: 3 }
       },

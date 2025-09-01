@@ -298,27 +298,78 @@ Inspects DOM elements with visual overlays and detailed analysis.
 
 *Single element inspection showing GitHub's header with detailed analysis*
 
-### Multi-Element Layout Analysis
+### Property Groups and Filtered Analysis
 
 ```json
 {
   "tool": "inspect_element", 
   "arguments": {
-    "css_selector": ".nav-item",
-    "url": "https://github.com",
-    "property_groups": ["layout", "colors"],
-    "limit": 5
+    "css_selector": "#secondary-button",
+    "url": "https://localhost:3000",
+    "property_groups": ["layout", "colors"]
   }
 }
 ```
 
-<img src="docs/images/multi-element-layout.png" width="800" alt="Screenshot showing multiple navigation items highlighted in different colors with relationship lines and spatial analysis between elements">
+<img src="docs/images/single-element-inspection.png" width="800" alt="Screenshot showing GitHub header element highlighted with overlay and JSON response containing computed styles, box model, and cascade rules">
 
-*Multi-element layout analysis with color-coded highlights and spatial relationships*
+*Single element inspection with detailed accessibility information, computed styles analysis, and developer tools overlay*
 
 <img src="docs/images/property-groups-filter.png" width="600" alt="Comparison showing filtered CSS properties for layout and colors groups versus all properties">
 
 *Property groups filtering - showing only layout and colors properties instead of all CSS properties*
+
+### Multi-Element Inspection and Spatial Analysis
+
+```json
+{
+  "tool": "inspect_element", 
+  "arguments": {
+    "css_selector": ".nested-item",
+    "url": "https://localhost:3000",
+    "limit": 3
+  }
+}
+```
+
+<img src="docs/images/multi-element-layout.png" width="800" alt="Screenshot showing three nested items highlighted in different colors (blue, green, yellow) demonstrating multi-element inspection with color-coded highlights and spatial relationship analysis">
+
+*Multi-element inspection of three `.nested-item` elements - each highlighted in a different color showing spatial relationships and distance calculations*
+
+**Key Features:**
+- **Color-coded highlights**: Each element gets a unique color (blue, green, yellow, etc.)
+- **Spatial relationships**: Pairwise distance calculations between all elements
+- **Alignment detection**: Automatic detection of top, left, center alignments
+- **Layout analysis**: Horizontal/vertical spacing and center-to-center distances
+
+**Response includes relationships array:**
+```json
+{
+  "screenshot": "base64-image-with-colored-highlights",
+  "elements": [
+    { "computed_styles": {...}, "box_model": {...} },
+    { "computed_styles": {...}, "box_model": {...} },
+    { "computed_styles": {...}, "box_model": {...} }
+  ],
+  "relationships": [
+    {
+      "from": ".nested-item:nth-child(1)",
+      "to": ".nested-item:nth-child(2)", 
+      "distance": {
+        "horizontal": 0,
+        "vertical": 29,
+        "center_to_center": 29
+      },
+      "alignment": {
+        "top": false,
+        "left": true,
+        "vertical_center": false,
+        "horizontal_center": false
+      }
+    }
+  ]
+}
+```
 
 ### Iterative CSS Debugging 
 
@@ -365,9 +416,13 @@ Inspects DOM elements with visual overlays and detailed analysis.
 // ✅ Apply to source: .action-button { margin-left: 32px; margin-top: 16px; }
 ```
 
-<img src="docs/images/css-edits-comparison.png" width="800" alt="Side-by-side before and after comparison showing button spacing improvements through CSS edits iteration">
+**Before**: Original button positioning
+<img src="docs/images/css-edits-before.png" width="800" alt="Before screenshot showing button with original positioning and spacing issues">
 
-*Before and after comparison showing the iterative CSS editing process - from cramped spacing to perfect alignment*
+**After**: Improved button positioning with CSS edits
+<img src="docs/images/css-edits-after.png" width="800" alt="After screenshot showing button with improved positioning through CSS edits iteration">
+
+*Before and after comparison showing the iterative CSS editing process - from original positioning to improved alignment*
 
 ### Common AI Agent Workflows
 
