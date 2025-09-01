@@ -8,6 +8,10 @@
 
 Inspect-MCP is an MCP (Model Context Protocol) server that enables AI coding agents to inspect, edit, and perfect web UIs through Chrome DevTools Protocol. Instead of guessing layout and styling, agents can programmatically inspect live elements, test CSS modifications, and iterate until pixel-perfect—just like using browser DevTools.
 
+<img src="docs/images/hero-screenshot.png" width="800" alt="Hero screenshot showing Inspect-MCP tool in action with AI agent inspecting a web element and receiving visual feedback with highlighted overlays and detailed CSS analysis">
+
+*AI agent inspecting a web element using Inspect-MCP, receiving visual feedback with highlighted overlays and detailed CSS analysis*
+
 ## Table of Contents
 
 - [CSS Editing Workflow](#css-editing-workflow)
@@ -24,6 +28,10 @@ Inspect-MCP is an MCP (Model Context Protocol) server that enables AI coding age
 ## CSS Editing Workflow
 
 Inspect-MCP enables the same iterative workflow you'd use in browser DevTools:
+
+<img src="docs/images/css-workflow.png" width="700" alt="Demonstration of the CSS editing workflow showing inspect element, test CSS changes, verify results, and iterate until perfect">
+
+*The iterative CSS editing workflow in action - just like using browser DevTools*
 
 ```mermaid
 graph LR
@@ -268,6 +276,10 @@ Inspects DOM elements with visual overlays and detailed analysis.
 }
 ```
 
+<img src="docs/images/box-model-visual.png" width="500" alt="Visual representation of the CSS box model showing content, padding, border, and margin boxes with precise pixel measurements">
+
+*Box model visualization with precise measurements for each layer*
+
 ## Examples
 
 ### Basic Element Inspection
@@ -282,7 +294,9 @@ Inspects DOM elements with visual overlays and detailed analysis.
 }
 ```
 
-**Result**: Screenshot with highlighted header + complete style analysis
+<img src="docs/images/single-element-inspection.png" width="800" alt="Screenshot showing GitHub header element highlighted with overlay and JSON response containing computed styles, box model, and cascade rules">
+
+*Single element inspection showing GitHub's header with detailed analysis*
 
 ### Multi-Element Layout Analysis
 
@@ -298,7 +312,13 @@ Inspects DOM elements with visual overlays and detailed analysis.
 }
 ```
 
-**Result**: All navigation items highlighted in different colors + spatial relationships calculated
+<img src="docs/images/multi-element-layout.png" width="800" alt="Screenshot showing multiple navigation items highlighted in different colors with relationship lines and spatial analysis between elements">
+
+*Multi-element layout analysis with color-coded highlights and spatial relationships*
+
+<img src="docs/images/property-groups-filter.png" width="600" alt="Comparison showing filtered CSS properties for layout and colors groups versus all properties">
+
+*Property groups filtering - showing only layout and colors properties instead of all CSS properties*
 
 ### Iterative CSS Debugging 
 
@@ -345,7 +365,9 @@ Inspects DOM elements with visual overlays and detailed analysis.
 // ✅ Apply to source: .action-button { margin-left: 32px; margin-top: 16px; }
 ```
 
-**Result**: Pixel-perfect spacing achieved through iteration, ready to copy to source code
+<img src="docs/images/css-edits-comparison.png" width="800" alt="Side-by-side before and after comparison showing button spacing improvements through CSS edits iteration">
+
+*Before and after comparison showing the iterative CSS editing process - from cramped spacing to perfect alignment*
 
 ### Common AI Agent Workflows
 
