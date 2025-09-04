@@ -6,7 +6,7 @@
 
 **Bridge the gap between AI coding agents and pixel-perfect web development.**
 
-Inspect-MCP is an MCP (Model Context Protocol) server that enables AI coding agents to inspect, edit, and perfect web UIs through Chrome DevTools Protocol. Instead of guessing layout and styling, agents can programmatically inspect live elements, test CSS modifications, and iterate until pixel-perfect—just like using browser DevTools.
+Inspect-MCP is an MCP (Model Context Protocol) server that enables AI coding agents to inspect, edit, and perfect web UIs through Chrome DevTools Protocol. **Features intelligent viewport optimization that maximizes LLM visual comprehension while minimizing context usage.** Instead of guessing layout and styling, agents can programmatically inspect live elements, test CSS modifications, and iterate until pixel-perfect—just like using browser DevTools.
 
 <img src="docs/images/hero-screenshot.png" width="800" alt="Hero screenshot showing Inspect-MCP tool in action with AI agent inspecting a web element and receiving visual feedback with highlighted overlays and detailed CSS analysis">
 
@@ -106,6 +106,7 @@ AI coding agents excel at generating code but struggle with visual context when 
 ✅ **Live CSS editing**: Test style changes instantly with `css_edits` parameter  
 ✅ **Layout analysis**: Box model, margins, padding with pixel precision  
 ✅ **Multi-element relationships**: Spatial calculations between elements  
+✅ **Smart viewport optimization**: Auto-center and zoom for efficient LLM context usage  
 ✅ **Iterative workflow**: Inspect → Edit → Verify → Copy cycle like DevTools  
 ✅ **Zero-config setup**: Auto-discovers or launches Chrome seamlessly  
 
@@ -229,6 +230,9 @@ Inspects DOM elements with visual overlays and detailed analysis.
 | `property_groups` | string[] | ❌ | CSS property categories: `layout`, `box`, `typography`, `colors`, `effects` |
 | `css_edits` | object | ❌ | **Test CSS changes**: Apply inline styles before taking screenshot. Perfect for iterating on fixes! Example: `{"margin": "10px", "color": "red"}` |
 | `limit` | number | ❌ | Max elements when multiple match (default: 10, max: 20) |
+| `autoCenter` | boolean | ❌ | **Smart centering** (default: true): Centers elements in viewport for optimal LLM focus and attention |
+| `autoZoom` | boolean | ❌ | **Intelligent zoom** (default: true): Auto-adjusts scale for clarity while conserving context tokens |
+| `zoomFactor` | number | ❌ | **Manual zoom** (0.5-3.0): Override auto-zoom with specific scale factor for consistent analysis |
 
 #### Response Formats
 
@@ -279,6 +283,52 @@ Inspects DOM elements with visual overlays and detailed analysis.
 <img src="docs/images/box-model-visual.png" width="500" alt="Visual representation of the CSS box model showing content, padding, border, and margin boxes with precise pixel measurements">
 
 *Box model visualization with precise measurements for each layer*
+
+## Smart Viewport Optimization for AI
+
+Inspect-MCP automatically optimizes screenshots for **maximum LLM comprehension while minimizing context usage**:
+
+### Why This Matters for AI Agents
+- **Reduced token consumption**: Cropped, focused screenshots use fewer visual tokens
+- **Enhanced attention**: LLMs naturally focus better on centered, prominent elements  
+- **Clearer visual analysis**: Zoomed elements show fine details for precise debugging
+- **Efficient context window**: Eliminates irrelevant page areas that waste context
+
+### Automatic Centering (`autoCenter`)
+- Centers target elements in viewport (default: enabled)
+- Ensures small elements don't get lost in large screenshots
+- Improves LLM's ability to identify and analyze the inspected element
+
+### Intelligent Zoom (`autoZoom`)  
+- Automatically scales viewport based on element size (default: enabled)
+- Small elements (<10% viewport) → Zoom in up to 3x for detail
+- Large elements (>80% viewport) → Zoom out to 0.5x to fit
+- Medium elements → No adjustment needed
+
+### Manual Control
+
+```json
+// Disable auto-features for full context view
+{
+  "tool": "inspect_element",
+  "arguments": {
+    "css_selector": ".header",
+    "url": "https://example.com",
+    "autoCenter": false,
+    "autoZoom": false
+  }
+}
+
+// Use specific zoom level for consistent comparison
+{
+  "tool": "inspect_element",
+  "arguments": {
+    "css_selector": ".button",
+    "url": "https://example.com",
+    "zoomFactor": 2.0
+  }
+}
+```
 
 ## Examples
 
@@ -334,7 +384,9 @@ Inspects DOM elements with visual overlays and detailed analysis.
 
 <img src="docs/images/multi-element-layout.png" width="800" alt="Screenshot showing three nested items highlighted in different colors (blue, green, yellow) demonstrating multi-element inspection with color-coded highlights and spatial relationship analysis">
 
-*Multi-element inspection of three `.nested-item` elements - each highlighted in a different color showing spatial relationships and distance calculations*
+*Multi-element inspection of three `.nested-item` elements - automatically zoomed and cropped to focus LLM attention on the relevant elements while conserving context*
+
+> **Note**: Screenshots are intelligently cropped and zoomed by default to optimize for AI analysis. This reduces token usage and improves visual comprehension. Use `autoZoom: false` and `autoCenter: false` for full-page context.
 
 **Key Features:**
 - **Color-coded highlights**: Each element gets a unique color (blue, green, yellow, etc.)
