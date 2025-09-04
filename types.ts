@@ -23,6 +23,34 @@ export interface BoxModel {
   margin: Rect;
 }
 
+export interface SpacingInfo {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+export interface ElementMetrics {
+  viewport: Rect;
+  boxSizing?: string;  // 'content-box' | 'border-box'
+  page: Rect;
+  bodyOffset: {
+    x: number;
+    y: number;
+  };
+  scroll: {
+    x: number;
+    y: number;
+  };
+  viewportSize: {
+    width: number;
+    height: number;
+  };
+  margin: SpacingInfo;
+  padding: SpacingInfo;
+  border: SpacingInfo;
+}
+
 export interface CascadeRule {
   selector: string;
   source: string;

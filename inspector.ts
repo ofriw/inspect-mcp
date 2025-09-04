@@ -1,4 +1,4 @@
-import type { InspectElementArgs, InspectionResult, MultiInspectionResult, ElementInspection, ElementRelationship, BoxModel, CascadeRule, GroupedStyles } from './types.js';
+import type { InspectElementArgs, InspectionResult, MultiInspectionResult, ElementInspection, ElementRelationship, BoxModel, CascadeRule, GroupedStyles, Rect, ElementMetrics } from './types.js';
 import { ensureChromeWithCDP, connectToTarget, CDPClient } from './cdp-client.js';
 import { 
   DEFAULT_PROPERTY_GROUPS, 
@@ -6,14 +6,21 @@ import {
   categorizeProperties, 
   type PropertyGroup 
 } from './property-groups.js';
+import { BrowserScripts } from './browser-scripts.js';
+import { Jimp } from 'jimp';
 
-// Visual constants for multi-element highlighting
+interface ViewportInfo {
+  width: number;
+  height: number;
+}
+
+// Reserved for future multi-element highlighting (currently CDP only supports single element)
 const HIGHLIGHT_COLORS = [
-  { r: 111, g: 168, b: 220, a: 0.3 }, // Blue
-  { r: 147, g: 196, b: 125, a: 0.3 }, // Green
-  { r: 255, g: 229, b: 153, a: 0.3 }, // Yellow
-  { r: 246, g: 178, b: 107, a: 0.3 }, // Orange
-  { r: 220, g: 111, b: 168, a: 0.3 }, // Purple
+  { r: 0, g: 0, b: 255, a: 0.8 }, // Bright Blue
+  { r: 0, g: 255, b: 0, a: 0.8 }, // Bright Green
+  { r: 255, g: 255, b: 0, a: 0.8 }, // Bright Yellow
+  { r: 255, g: 128, b: 0, a: 0.8 }, // Orange
+  { r: 255, g: 0, b: 255, a: 0.8 }, // Magenta
 ];
 
 // Pixel tolerance for alignment detection
@@ -30,6 +37,8 @@ interface ViewportInfo {
   height: number;
   deviceScaleFactor: number;
   mobile: boolean;
+  scrollX: number;
+  scrollY: number;
 }
 
 interface ElementPosition {
@@ -42,64 +51,76 @@ interface ElementPosition {
 async function getViewportInfo(cdp: CDPClient): Promise<ViewportInfo> {
   const metrics = await cdp.send('Page.getLayoutMetrics');
   return {
-    width: metrics.visualViewport?.clientWidth || metrics.cssVisualViewport?.clientWidth || 1280,
-    height: metrics.visualViewport?.clientHeight || metrics.cssVisualViewport?.clientHeight || 1024,
-    deviceScaleFactor: metrics.visualViewport?.scale || 1,
-    mobile: false
+    width: metrics.cssVisualViewport?.clientWidth || 1280,
+    height: metrics.cssVisualViewport?.clientHeight || 1024,
+    deviceScaleFactor: 1, // Use default - actual device scale is handled by Chrome automatically
+    mobile: false,
+    scrollX: metrics.cssVisualViewport?.pageLeft || 0,
+    scrollY: metrics.cssVisualViewport?.pageTop || 0
+  };
+}
+
+async function getElementMetrics(cdp: CDPClient, uniqueId: string): Promise<ElementMetrics | null> {
+  const result = await cdp.send('Runtime.evaluate', {
+    expression: BrowserScripts.getElementMetrics(uniqueId),
+    returnByValue: true
+  });
+
+  if (result.exceptionDetails) {
+    console.warn('Failed to get element metrics:', result.exceptionDetails);
+    return null;
+  }
+
+  return result.result.value as ElementMetrics | null;
+}
+
+function convertElementMetricsToBoxModel(metrics: ElementMetrics): BoxModel {
+  const { viewport, margin, padding, border } = metrics;
+  
+  // viewport from getBoundingClientRect() is ALWAYS the border box (content + padding + border)
+  const borderBox = viewport;
+  
+  return {
+    // Margin box (outermost) - expand border box by margins
+    margin: {
+      x: borderBox.x - margin.left,
+      y: borderBox.y - margin.top,
+      width: borderBox.width + margin.left + margin.right,
+      height: borderBox.height + margin.top + margin.bottom
+    },
+    // Border box - exactly what getBoundingClientRect() returns
+    border: {
+      x: borderBox.x,
+      y: borderBox.y,
+      width: borderBox.width,
+      height: borderBox.height
+    },
+    // Padding box - shrink border box by border widths
+    padding: {
+      x: borderBox.x + border.left,
+      y: borderBox.y + border.top,
+      width: borderBox.width - border.left - border.right,
+      height: borderBox.height - border.top - border.bottom
+    },
+    // Content box - shrink padding box by padding
+    content: {
+      x: borderBox.x + border.left + padding.left,
+      y: borderBox.y + border.top + padding.top,
+      width: borderBox.width - border.left - border.right - padding.left - padding.right,
+      height: borderBox.height - border.top - border.bottom - padding.top - padding.bottom
+    }
   };
 }
 
 async function centerElement(cdp: CDPClient, uniqueId: string): Promise<void> {
   await cdp.send('Runtime.evaluate', {
-    expression: `
-      (function() {
-        const element = document.querySelector('[data-inspect-id="${uniqueId}"]');
-        if (element) {
-          element.scrollIntoView({
-            block: "center",
-            inline: "center",
-            behavior: "instant"
-          });
-        }
-      })();
-    `
+    expression: BrowserScripts.centerElement(uniqueId)
   });
 }
 
 async function centerMultipleElements(cdp: CDPClient, uniqueIds: string[]): Promise<void> {
   await cdp.send('Runtime.evaluate', {
-    expression: `
-      (function() {
-        const elements = [${uniqueIds.map(id => `document.querySelector('[data-inspect-id="${id}"]')`).join(', ')}];
-        const validElements = elements.filter(el => el !== null);
-        
-        if (validElements.length === 0) return;
-        
-        // Calculate bounding box of all elements
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        
-        validElements.forEach(el => {
-          const rect = el.getBoundingClientRect();
-          minX = Math.min(minX, rect.left);
-          minY = Math.min(minY, rect.top);
-          maxX = Math.max(maxX, rect.right);
-          maxY = Math.max(maxY, rect.bottom);
-        });
-        
-        // Calculate center of the bounding box
-        const centerX = (minX + maxX) / 2;
-        const centerY = (minY + maxY) / 2;
-        
-        // Scroll to center the group
-        const viewportCenterX = window.innerWidth / 2;
-        const viewportCenterY = window.innerHeight / 2;
-        
-        window.scrollBy(
-          centerX - viewportCenterX,
-          centerY - viewportCenterY
-        );
-      })();
-    `
+    expression: BrowserScripts.centerMultipleElements(uniqueIds)
   });
 }
 
@@ -170,41 +191,238 @@ function shouldCenterElement(elementPosition: ElementPosition, viewport: Viewpor
 }
 
 async function setViewportScale(cdp: CDPClient, viewport: ViewportInfo, zoomFactor: number): Promise<void> {
-  await cdp.send('Emulation.setDeviceMetricsOverride', {
-    width: viewport.width,
-    height: viewport.height,
-    deviceScaleFactor: viewport.deviceScaleFactor,
-    mobile: viewport.mobile,
-    viewport: {
-      x: 0,
-      y: 0,
-      width: viewport.width,
-      height: viewport.height,
-      scale: zoomFactor
-    }
+  await cdp.send('Emulation.setPageScaleFactor', {
+    pageScaleFactor: zoomFactor
   });
 }
 
 async function resetViewportScale(cdp: CDPClient): Promise<void> {
-  await cdp.send('Emulation.clearDeviceMetricsOverride');
+  await cdp.send('Emulation.setPageScaleFactor', {
+    pageScaleFactor: 1
+  });
 }
 
 async function highlightElements(cdp: CDPClient, nodeIds: number[]): Promise<void> {
-  for (let i = 0; i < nodeIds.length; i++) {
-    const colorIndex = i % HIGHLIGHT_COLORS.length;
-    await cdp.send('Overlay.highlightNode', {
-      nodeId: nodeIds[i],
-      highlightConfig: {
-        contentColor: HIGHLIGHT_COLORS[colorIndex],
-        paddingColor: HIGHLIGHT_COLORS[(colorIndex + 1) % HIGHLIGHT_COLORS.length],
-        borderColor: HIGHLIGHT_COLORS[(colorIndex + 2) % HIGHLIGHT_COLORS.length],
-        marginColor: HIGHLIGHT_COLORS[(colorIndex + 3) % HIGHLIGHT_COLORS.length],
-        showInfo: true,
-        showRulers: i === 0, // Only show rulers on first element to avoid clutter
-        showExtensionLines: true
-      }
-    });
+  // NOTE: This function is kept for compatibility but we no longer use CDP overlays
+  // Highlighting is now done by drawing directly on screenshots in drawHighlightOnScreenshot()
+  // Clear any existing overlay to ensure clean screenshots
+  if (nodeIds.length > 0) {
+    await cdp.send('Overlay.hideHighlight');
   }
+}
+
+/**
+ * Draws highlight boxes directly on a screenshot image
+ * This bypasses CDP overlay issues and works correctly with zoom
+ */
+async function drawHighlightOnScreenshot(
+  screenshotBuffer: Buffer,
+  boxModel: BoxModel,
+  viewportInfo: ViewportInfo,
+  clipRegion?: { x: number; y: number; width: number; height: number },
+  zoomFactor: number = 1,
+  elementMetrics?: ElementMetrics | null
+): Promise<Buffer> {
+  try {
+    // Load screenshot into Jimp
+    const image = await Jimp.read(screenshotBuffer);
+    
+    // Transform coordinates using our clean coordinate transformation pipeline
+    let adjustedBoxModel = boxModel;
+    
+    // Step 1: Calculate expected dimensions and scale factors
+    let expectedWidth = viewportInfo.width;
+    let expectedHeight = viewportInfo.height;
+    
+    // If clipped, expected dimensions are the clip dimensions
+    if (clipRegion) {
+      expectedWidth = clipRegion.width;
+      expectedHeight = clipRegion.height;
+    }
+    
+    const actualScaleX = image.bitmap.width / expectedWidth;
+    const actualScaleY = image.bitmap.height / expectedHeight;
+    
+    // Add comprehensive diagnostic logging
+    console.error(`=== Screenshot Analysis ===`);
+    console.error(`  Viewport: ${viewportInfo.width}x${viewportInfo.height}`);
+    console.error(`  Clip region: ${clipRegion ? `${clipRegion.x},${clipRegion.y} ${clipRegion.width}x${clipRegion.height}` : 'none'}`);
+    console.error(`  Expected dimensions: ${expectedWidth}x${expectedHeight}`);
+    console.error(`  Actual screenshot: ${image.bitmap.width}x${image.bitmap.height}`);
+    console.error(`  Scale factors: X=${actualScaleX.toFixed(3)}, Y=${actualScaleY.toFixed(3)}`);
+    console.error(`  Box model margin before: ${boxModel.margin.x},${boxModel.margin.y} ${boxModel.margin.width}x${boxModel.margin.height}`);
+    
+    // Step 2: Apply viewport-to-screenshot coordinate scaling if needed
+    if (Math.abs(actualScaleX - 1) > 0.01 || Math.abs(actualScaleY - 1) > 0.01) {
+      adjustedBoxModel = {
+        content: scaleRect(adjustedBoxModel.content, actualScaleX, actualScaleY),
+        padding: scaleRect(adjustedBoxModel.padding, actualScaleX, actualScaleY),
+        border: scaleRect(adjustedBoxModel.border, actualScaleX, actualScaleY),
+        margin: scaleRect(adjustedBoxModel.margin, actualScaleX, actualScaleY)
+      };
+      console.error(`  Box model margin after scaling: ${adjustedBoxModel.margin.x},${adjustedBoxModel.margin.y} ${adjustedBoxModel.margin.width}x${adjustedBoxModel.margin.height}`);
+    }
+    
+    // Step 3: Apply clip region adjustment if screenshot is clipped
+    if (clipRegion) {
+      // Scale the clip region by the same device pixel ratio as the coordinates
+      const scaledClip = (Math.abs(actualScaleX - 1) > 0.01 || Math.abs(actualScaleY - 1) > 0.01) ? {
+        x: clipRegion.x * actualScaleX,
+        y: clipRegion.y * actualScaleY,
+        width: clipRegion.width * actualScaleX,
+        height: clipRegion.height * actualScaleY
+      } : clipRegion;
+      
+      console.error(`  Scaled clip: ${scaledClip.x},${scaledClip.y} ${scaledClip.width}x${scaledClip.height}`);
+      
+      adjustedBoxModel = {
+        content: adjustRect(adjustedBoxModel.content, scaledClip),
+        padding: adjustRect(adjustedBoxModel.padding, scaledClip),
+        border: adjustRect(adjustedBoxModel.border, scaledClip),
+        margin: adjustRect(adjustedBoxModel.margin, scaledClip)
+      };
+      console.error(`  Box model margin after clip adjust: ${adjustedBoxModel.margin.x},${adjustedBoxModel.margin.y} ${adjustedBoxModel.margin.width}x${adjustedBoxModel.margin.height}`);
+    }
+    
+    // Draw highlight layers (outermost to innermost)
+    // Margin - Yellow
+    drawRectangleOutline(image, adjustedBoxModel.margin, 0xFFFF00FF, 1);
+    
+    // Border - Red  
+    drawRectangleOutline(image, adjustedBoxModel.border, 0xFF0000FF, 2);
+    
+    // Padding - Green
+    drawRectangleOutline(image, adjustedBoxModel.padding, 0x00FF00FF, 1);
+    
+    // Content - Blue with fill
+    drawRectangleFilled(image, adjustedBoxModel.content, 0x0078FF44);
+    drawRectangleOutline(image, adjustedBoxModel.content, 0x0078FFFF, 2);
+    
+    // Draw rulers extending from the element
+    drawRulers(image, adjustedBoxModel.border, image.bitmap.width, image.bitmap.height);
+    
+    // Return modified image as buffer
+    return await image.getBuffer('image/png');
+    
+  } catch (error) {
+    console.warn('Failed to draw highlight on screenshot:', error);
+    // Return original screenshot if drawing fails
+    return screenshotBuffer;
+  }
+}
+
+function scaleRect(rect: Rect, scaleX: number, scaleY?: number): Rect {
+  const actualScaleY = scaleY !== undefined ? scaleY : scaleX;
+  return {
+    x: rect.x * scaleX,
+    y: rect.y * actualScaleY,
+    width: rect.width * scaleX,
+    height: rect.height * actualScaleY
+  };
+}
+
+function adjustRect(rect: Rect, clip: { x: number; y: number; width: number; height: number }): Rect {
+  return {
+    x: Math.max(0, rect.x - clip.x),
+    y: Math.max(0, rect.y - clip.y),
+    width: rect.width,
+    height: rect.height
+  };
+}
+
+
+function drawRectangleOutline(image: any, rect: Rect, color: number, thickness: number): void {
+  const { x, y, width, height } = rect;
+  
+  // Bounds check
+  const imgWidth = image.bitmap.width;
+  const imgHeight = image.bitmap.height;
+  if (x >= imgWidth || y >= imgHeight || x + width <= 0 || y + height <= 0) {
+    return;
+  }
+  
+  // Top and bottom edges
+  for (let px = Math.max(0, x); px < Math.min(imgWidth, x + width); px++) {
+    for (let t = 0; t < thickness; t++) {
+      if (y + t >= 0 && y + t < imgHeight) {
+        image.setPixelColor(color >>> 0, px, y + t);
+      }
+      if (y + height - 1 - t >= 0 && y + height - 1 - t < imgHeight) {
+        image.setPixelColor(color >>> 0, px, y + height - 1 - t);
+      }
+    }
+  }
+  
+  // Left and right edges
+  for (let py = Math.max(0, y); py < Math.min(imgHeight, y + height); py++) {
+    for (let t = 0; t < thickness; t++) {
+      if (x + t >= 0 && x + t < imgWidth) {
+        image.setPixelColor(color >>> 0, x + t, py);
+      }
+      if (x + width - 1 - t >= 0 && x + width - 1 - t < imgWidth) {
+        image.setPixelColor(color >>> 0, x + width - 1 - t, py);
+      }
+    }
+  }
+}
+
+function drawRectangleFilled(image: any, rect: Rect, color: number): void {
+  const { x, y, width, height } = rect;
+  const imgWidth = image.bitmap.width;
+  const imgHeight = image.bitmap.height;
+  
+  for (let px = Math.max(0, x); px < Math.min(imgWidth, x + width); px++) {
+    for (let py = Math.max(0, y); py < Math.min(imgHeight, y + height); py++) {
+      // Blend with existing pixel for transparency effect
+      const existing = image.getPixelColor(px, py);
+      const blended = blendColors(existing, color);
+      image.setPixelColor(blended, px, py);
+    }
+  }
+}
+
+function drawRulers(image: any, elementRect: Rect, imgWidth: number, imgHeight: number): void {
+  const rulerColor = 0xFF00FFFF; // Magenta
+  
+  // Vertical ruler at element's left edge
+  const centerX = Math.floor(elementRect.x + elementRect.width / 2);
+  if (centerX >= 0 && centerX < imgWidth) {
+    for (let y = 0; y < imgHeight; y++) {
+      image.setPixelColor(rulerColor >>> 0, centerX, y);
+    }
+  }
+  
+  // Horizontal ruler at element's center
+  const centerY = Math.floor(elementRect.y + elementRect.height / 2);
+  if (centerY >= 0 && centerY < imgHeight) {
+    for (let x = 0; x < imgWidth; x++) {
+      image.setPixelColor(rulerColor >>> 0, x, centerY);
+    }
+  }
+}
+
+function blendColors(background: number, foreground: number): number {
+  // Simple alpha blending
+  const bgR = (background >> 24) & 0xFF;
+  const bgG = (background >> 16) & 0xFF;
+  const bgB = (background >> 8) & 0xFF;
+  const bgA = background & 0xFF;
+  
+  const fgR = (foreground >> 24) & 0xFF;
+  const fgG = (foreground >> 16) & 0xFF;
+  const fgB = (foreground >> 8) & 0xFF;
+  const fgA = foreground & 0xFF;
+  
+  const alpha = fgA / 255;
+  const invAlpha = 1 - alpha;
+  
+  const r = Math.floor(fgR * alpha + bgR * invAlpha);
+  const g = Math.floor(fgG * alpha + bgG * invAlpha);
+  const b = Math.floor(fgB * alpha + bgB * invAlpha);
+  const a = Math.max(fgA, bgA);
+  
+  // Convert to unsigned 32-bit integer to avoid negative values
+  return ((r << 24) | (g << 16) | (b << 8) | a) >>> 0;
 }
 
 /**
@@ -267,29 +485,7 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
     // Note: We use temporary data-inspect-id attributes to handle complex selectors
     // and ensure we get the exact same elements when querying for node IDs
     const evalResult = await cdp.send('Runtime.evaluate', {
-      expression: `
-        (function() {
-          try {
-            const elements = Array.from(document.querySelectorAll(${JSON.stringify(css_selector)}));
-            if (elements.length === 0) return { error: 'No elements found' };
-            
-            // Mark elements with unique attributes and return info
-            return elements.slice(0, ${limit}).map((el, i) => {
-              const uniqueId = '_inspect_' + Date.now() + '_' + i;
-              el.setAttribute('data-inspect-id', uniqueId);
-              return {
-                index: i,
-                uniqueId: uniqueId,
-                tagName: el.tagName,
-                id: el.id || null,
-                className: el.className || null
-              };
-            });
-          } catch (e) {
-            return { error: e.message };
-          }
-        })()
-      `,
+      expression: BrowserScripts.markElementsWithIds(css_selector, limit),
       returnByValue: true
     });
     
@@ -319,15 +515,6 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
       throw new Error(`Element not found: ${css_selector}`);
     }
     
-    // Clean up the temporary attributes
-    await cdp.send('Runtime.evaluate', {
-      expression: `
-        document.querySelectorAll('[data-inspect-id]').forEach(el => {
-          el.removeAttribute('data-inspect-id');
-        });
-      `
-    });
-    
     if (nodeIds.length === 1) {
       // Single element - return simple structure
       return await inspectSingleElement(
@@ -355,6 +542,14 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
     }
     
   } finally {
+    // Clean up all data-inspect-id attributes before closing CDP
+    try {
+      await cdp.send('Runtime.evaluate', {
+        expression: BrowserScripts.cleanupInspectIds()
+      });
+    } catch (cleanupError) {
+      console.warn('Failed to clean up data-inspect-id attributes:', cleanupError);
+    }
     cdp.close();
   }
 }
@@ -375,52 +570,38 @@ async function inspectSingleElement(
     await cdp.setInlineStyles(nodeId, css_edits);
   }
   
-  // Get initial box model for bounds and positioning
-  const boxModelResult = await cdp.send('DOM.getBoxModel', { nodeId });
-  if (!boxModelResult.model) {
-    throw new Error(`Unable to get box model for element: ${selector}. Element may not be visible.`);
-  }
-  const initialBoxModel = convertBoxModel(boxModelResult.model);
-  
-  // Get viewport info for centering and zoom calculations
-  const viewportInfo = await getViewportInfo(cdp);
-  
-  // Create element position info
-  const elementPosition: ElementPosition = {
-    centerX: initialBoxModel.border.x + initialBoxModel.border.width / 2,
-    centerY: initialBoxModel.border.y + initialBoxModel.border.height / 2,
-    width: initialBoxModel.border.width,
-    height: initialBoxModel.border.height
-  };
-  
-  // Store original viewport state for restoration
-  const originalViewport = { ...viewportInfo };
-  
-  // Find the unique ID for this element to use for centering
+  // Find the unique ID for this element to use for coordinate retrieval
   const uniqueIdResult = await cdp.send('Runtime.evaluate', {
-    expression: `
-      (function() {
-        const elements = document.querySelectorAll('${selector.replace(/'/g, "\\'")}');
-        for (let i = 0; i < elements.length; i++) {
-          const element = elements[i];
-          if (element.getAttribute('data-inspect-id')) {
-            return element.getAttribute('data-inspect-id');
-          }
-        }
-        // If no data-inspect-id found, create a temporary one
-        const element = document.querySelector('${selector.replace(/'/g, "\\'")}');
-        if (element) {
-          const uniqueId = '_inspect_temp_' + Date.now();
-          element.setAttribute('data-inspect-id', uniqueId);
-          return uniqueId;
-        }
-        return null;
-      })();
-    `,
+    expression: BrowserScripts.findOrCreateUniqueId(selector),
     returnByValue: true
   });
   
   const uniqueId = uniqueIdResult.result.value;
+  if (!uniqueId) {
+    throw new Error(`Unable to get element for selector: ${selector}. Element may not be visible.`);
+  }
+
+  // Get initial element metrics using JavaScript for reliable coordinates
+  const initialMetrics = await getElementMetrics(cdp, uniqueId);
+  if (!initialMetrics) {
+    throw new Error(`Unable to get element metrics for: ${selector}. Element may not be visible.`);
+  }
+  
+  const initialBoxModel = convertElementMetricsToBoxModel(initialMetrics);
+  
+  // Get viewport info for centering and zoom calculations
+  const viewportInfo = await getViewportInfo(cdp);
+  
+  // Create element position info using reliable JavaScript coordinates
+  const elementPosition: ElementPosition = {
+    centerX: initialMetrics.viewport.x + initialMetrics.viewport.width / 2,
+    centerY: initialMetrics.viewport.y + initialMetrics.viewport.height / 2,
+    width: initialMetrics.viewport.width,
+    height: initialMetrics.viewport.height
+  };
+  
+  // Store original viewport state for restoration
+  const originalViewport = { ...viewportInfo };
   let appliedZoomFactor = 1;
   
   try {
@@ -447,9 +628,9 @@ async function inspectSingleElement(
       }
     }
     
-    // Get updated box model after centering and zooming
-    const updatedBoxModelResult = await cdp.send('DOM.getBoxModel', { nodeId });
-    const boxModel = updatedBoxModelResult.model ? convertBoxModel(updatedBoxModelResult.model) : initialBoxModel;
+    // Get updated element metrics after centering and zooming
+    const updatedMetrics = await getElementMetrics(cdp, uniqueId);
+    const boxModel = updatedMetrics ? convertElementMetricsToBoxModel(updatedMetrics) : initialBoxModel;
     
     // Get computed styles
     const computedStylesResult = await cdp.send('CSS.getComputedStyleForNode', { nodeId });
@@ -461,17 +642,47 @@ async function inspectSingleElement(
     const allCascadeRules = convertCascadeRules(matchedStylesResult);
     const filteredCascadeRules = filterCascadeRules(allCascadeRules, property_groups, false);
     
-    // Highlight element with overlay
+    // Highlight element with overlay AFTER zoom to ensure correct coordinates
     await highlightElements(cdp, [nodeId]);
     
-    // Capture full viewport screenshot with overlay
-    const screenshotResult = await cdp.send('Page.captureScreenshot', {
-      format: 'png'
-    });
+    // Capture screenshot with overlay (clip if zoomed)
+    let screenshotOptions: any = { format: 'png' };
+    
+    if (appliedZoomFactor > 1) {
+      // Calculate clip bounds around the element with padding 
+      // After zoom, DOM.getBoxModel coordinates are already in viewport space
+      const padding = 100;
+      const x = Math.max(0, Math.floor(boxModel.margin.x - padding));
+      const y = Math.max(0, Math.floor(boxModel.margin.y - padding));
+      const width = Math.max(1, Math.min(viewportInfo.width - x, 
+                                       Math.ceil(boxModel.margin.width + 2 * padding)));
+      const height = Math.max(1, Math.min(viewportInfo.height - y,
+                                        Math.ceil(boxModel.margin.height + 2 * padding)));
+      
+      // Only apply clip if values are valid
+      if (x >= 0 && y >= 0 && width > 0 && height > 0 && 
+          x + width <= viewportInfo.width && y + height <= viewportInfo.height) {
+        screenshotOptions.clip = { x, y, width, height, scale: 1 };
+      }
+    }
+    
+    const screenshotResult = await cdp.send('Page.captureScreenshot', screenshotOptions);
     
     if (!screenshotResult.data) {
       throw new Error('Failed to capture screenshot. The page may not be loaded or visible.');
     }
+    
+    // Draw custom highlights on the screenshot
+    let screenshotBuffer: Buffer = Buffer.from(screenshotResult.data, 'base64');
+    screenshotBuffer = await drawHighlightOnScreenshot(
+      screenshotBuffer,
+      boxModel,
+      viewportInfo,
+      screenshotOptions.clip,
+      appliedZoomFactor,
+      updatedMetrics
+    );
+    const enhancedScreenshot = screenshotBuffer.toString('base64');
     
     // Clear overlay
     await cdp.send('Overlay.hideHighlight');
@@ -488,7 +699,7 @@ async function inspectSingleElement(
     };
     
     return {
-      screenshot: `data:image/png;base64,${screenshotResult.data}`,
+      screenshot: `data:image/png;base64,${enhancedScreenshot}`,
       computed_styles: filteredComputedStyles,
       grouped_styles: groupedStyles,
       cascade_rules: filteredCascadeRules,
@@ -516,10 +727,7 @@ async function inspectSingleElement(
       // Clean up temporary data-inspect-id if we added one
       if (uniqueId && uniqueId.startsWith('_inspect_temp_')) {
         await cdp.send('Runtime.evaluate', {
-          expression: `
-            const el = document.querySelector('[data-inspect-id="${uniqueId}"]');
-            if (el) el.removeAttribute('data-inspect-id');
-          `
+          expression: BrowserScripts.cleanupTempId(uniqueId)
         });
       }
     } catch (cleanupError) {
@@ -668,17 +876,63 @@ async function inspectMultipleElements(
       filteredRules += filteredCascadeRules.length;
     }
   
-  // Highlight all elements with different colors
-  await highlightElements(cdp, nodeIds);
+    // Highlight the first element AFTER zoom to ensure correct coordinates
+    await highlightElements(cdp, nodeIds);
+    
+    // Wait for highlight overlay to render
+    await new Promise(resolve => setTimeout(resolve, 200));
   
-  // Capture screenshot with all overlays
-  const screenshotResult = await cdp.send('Page.captureScreenshot', {
-    format: 'png'
-  });
+  // Capture screenshot with all overlays (clip if zoomed)
+  let screenshotOptions: any = { format: 'png' };
+  
+  if (appliedZoomFactor > 1 && nodeData.length > 0) {
+    // Calculate bounding box for all elements
+    // After zoom, DOM.getBoxModel coordinates are already in viewport space
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+    
+    for (const data of nodeData) {
+      const box = data.boxModel.margin;
+      minX = Math.min(minX, box.x);
+      minY = Math.min(minY, box.y);
+      maxX = Math.max(maxX, box.x + box.width);
+      maxY = Math.max(maxY, box.y + box.height);
+    }
+    
+    // Add padding around the group (increased to include overlays)
+    const padding = 100;
+    const x = Math.max(0, Math.floor(minX - padding));
+    const y = Math.max(0, Math.floor(minY - padding));
+    const width = Math.max(1, Math.min(viewportInfo.width - x, 
+                                     Math.ceil(maxX - minX + 2 * padding)));
+    const height = Math.max(1, Math.min(viewportInfo.height - y,
+                                      Math.ceil(maxY - minY + 2 * padding)));
+    
+    // Only apply clip if values are valid
+    if (x >= 0 && y >= 0 && width > 0 && height > 0 && 
+        x + width <= viewportInfo.width && y + height <= viewportInfo.height) {
+      screenshotOptions.clip = { x, y, width, height, scale: 1 };
+    }
+  }
+  
+  const screenshotResult = await cdp.send('Page.captureScreenshot', screenshotOptions);
   
   if (!screenshotResult.data) {
     throw new Error('Failed to capture screenshot. The page may not be loaded or visible.');
   }
+  
+  // Draw custom highlights on the screenshot (highlight the first element)
+  let screenshotBuffer: Buffer = Buffer.from(screenshotResult.data, 'base64');
+  if (nodeData.length > 0) {
+    screenshotBuffer = await drawHighlightOnScreenshot(
+      screenshotBuffer,
+      nodeData[0].boxModel,
+      viewportInfo,
+      screenshotOptions.clip,
+      appliedZoomFactor
+    );
+  }
+  const enhancedScreenshot = screenshotBuffer.toString('base64');
   
   // Clear all overlays
   await cdp.send('Overlay.hideHighlight');
@@ -689,7 +943,7 @@ async function inspectMultipleElements(
     const result: MultiInspectionResult = {
       elements,
       relationships,
-      screenshot: `data:image/png;base64,${screenshotResult.data}`,
+      screenshot: `data:image/png;base64,${enhancedScreenshot}`,
       viewport_adjustments: {
         original_positions: elementPositions,
         centered: autoCenter,
@@ -713,13 +967,9 @@ async function inspectMultipleElements(
         await resetViewportScale(cdp);
       }
       
-      // Clean up temporary data-inspect-id attributes
+      // Clean up all data-inspect-id attributes
       await cdp.send('Runtime.evaluate', {
-        expression: `
-          document.querySelectorAll('[data-inspect-id^="_inspect_temp_"]').forEach(el => {
-            el.removeAttribute('data-inspect-id');
-          });
-        `
+        expression: BrowserScripts.cleanupInspectIds()
       });
     } catch (cleanupError) {
       // Don't throw cleanup errors, just log them
