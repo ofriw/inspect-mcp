@@ -16,9 +16,11 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",
     "chrome-launcher": "^1.1.2",
+    "jimp": "^1.6.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/jimp": "^0.2.1",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
     "typescript": "^5.7.0"
