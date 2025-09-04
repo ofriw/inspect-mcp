@@ -12,12 +12,12 @@ const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, '..');
 
-async function captureScreenshots() {
+async function regenerateScreenshots() {
   let testServer = null;
   let mcpClient = null;
   
   try {
-    // Clean up any existing Chrome processes
+    // Clean up any existing Chrome
     try {
       await execAsync('pkill -f "remote-debugging-port=9222"').catch(() => {});
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -37,39 +37,44 @@ async function captureScreenshots() {
     console.log('MCP client connected, waiting for Chrome...');
     await new Promise(resolve => setTimeout(resolve, 5000));
 
+    // Screenshots to regenerate with improved highlighting
     const screenshots = [
-      {
-        name: 'hero-screenshot',
-        selector: '#test-header',
-        url: testUrl
-      },
-      {
-        name: 'single-element-inspection', 
-        selector: '#precise-box',
-        url: testUrl
-      },
       {
         name: 'multi-element-layout',
         selector: '.nested-item',
         url: testUrl,
-        options: { limit: 3 }
+        description: 'Multi-element inspection with enhanced first-element highlighting'
+      },
+      {
+        name: 'single-element-inspection',
+        selector: '#test-header',
+        url: testUrl,
+        description: 'Single element inspection with enhanced highlighting'
+      },
+      {
+        name: 'hero-screenshot',
+        selector: '.test-button',
+        url: testUrl,
+        description: 'Hero screenshot showing enhanced element highlighting'
       },
       {
         name: 'css-edits-before',
         selector: '#primary-button',
-        url: testUrl
+        url: testUrl,
+        description: 'Before CSS edits - original element highlighting'
       },
       {
         name: 'css-edits-after',
-        selector: '#primary-button', 
+        selector: '#primary-button',
         url: testUrl,
         options: {
-          css_edits: {
-            'margin-left': '32px',
+          css_edits: { 
+            'margin-left': '32px', 
             'margin-top': '16px',
             'background-color': '#28a745'
           }
-        }
+        },
+        description: 'After CSS edits with enhanced highlighting'
       }
     ];
 
@@ -99,21 +104,25 @@ async function captureScreenshots() {
         const filename = join(projectRoot, 'docs', 'images', `${screenshot.name}.png`);
         writeFileSync(filename, imageBuffer);
         
-        console.log(`✅ Saved ${screenshot.name}.png (${imageBuffer.length} bytes)`);
+        console.log(`✅ Saved ${screenshot.name}.png (${imageBuffer.length} bytes) - ${screenshot.description}`);
         successCount++;
 
       } catch (error) {
         console.error(`❌ Failed to capture ${screenshot.name}:`, error.message);
       }
       
-      // Delay between captures
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Delay between captures for stability
+      await new Promise(resolve => setTimeout(resolve, 3000));
     }
 
-    console.log(`\n✅ Successfully captured ${successCount}/${screenshots.length} screenshots`);
+    console.log(`\n✅ Successfully regenerated ${successCount}/${screenshots.length} documentation screenshots`);
+    console.log('🎯 All screenshots now feature the enhanced first-element highlighting with:');
+    console.log('   • Red border for maximum visibility');
+    console.log('   • Color-coded box model (blue content, green padding, yellow margins)');
+    console.log('   • Rulers and extension lines for precise measurements');
 
   } catch (error) {
-    console.error('❌ Screenshot capture failed:', error);
+    console.error('❌ Screenshot regeneration failed:', error);
   } finally {
     if (mcpClient) {
       await mcpClient.stop();
@@ -131,4 +140,4 @@ async function captureScreenshots() {
   }
 }
 
-captureScreenshots().catch(console.error);
+regenerateScreenshots().catch(console.error);
