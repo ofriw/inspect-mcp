@@ -8,6 +8,39 @@ import {
 } from './property-groups.js';
 import { BrowserScripts } from './browser-scripts.js';
 import { Jimp } from 'jimp';
+import {
+  FONT_CONFIG,
+  VIEWPORT_CONFIG,
+  VISUAL_CONFIG,
+  BOX_MODEL_COLORS,
+  BOX_MODEL_THICKNESS,
+  TEXT_COLORS,
+  RULER_CONFIG,
+  CROSSHAIR_CONFIG,
+  HIGHLIGHT_COLORS,
+  FALLBACK_COLORS,
+  ELEMENT_LIMITS
+} from './constants.js';
+import {
+  drawRectangleOutline,
+  drawRectangleFilled,
+  drawStructuredLabel,
+  drawSimpleLabel,
+  drawCornerMarkers,
+  drawBoxModelLabels,
+  type DrawTextFunction
+} from './drawing-utils.js';
+import { renderTextOnImage } from './canvas-renderer.js';
+import {
+  viewportToScreenshot,
+  transformBoxModel,
+  calculateScalingFactors,
+  scaleRect,
+  adjustRectForClipping,
+  type ClipRegion,
+  type ScalingFactors
+} from './coordinate-utils.js';
+// CanvasKit initialization moved to canvas-renderer.ts module for better resource management
 
 interface ViewportInfo {
   width: number;
@@ -15,22 +48,27 @@ interface ViewportInfo {
 }
 
 // Reserved for future multi-element highlighting (currently CDP only supports single element)
-const HIGHLIGHT_COLORS = [
-  { r: 0, g: 0, b: 255, a: 0.8 }, // Bright Blue
-  { r: 0, g: 255, b: 0, a: 0.8 }, // Bright Green
-  { r: 255, g: 255, b: 0, a: 0.8 }, // Bright Yellow
-  { r: 255, g: 128, b: 0, a: 0.8 }, // Orange
-  { r: 255, g: 0, b: 255, a: 0.8 }, // Magenta
-];
+// Note: HIGHLIGHT_COLORS now imported from constants.js
 
 // Pixel tolerance for alignment detection
-const ALIGNMENT_TOLERANCE = 1;
+// Note: VISUAL_CONFIG.ALIGNMENT_TOLERANCE now imported from constants.js as VISUAL_CONFIG.ALIGNMENT_TOLERANCE
+
+// Helper function to draw text on Jimp image using the canvas renderer module
+async function drawTextOnJimpImage(
+  jimpImage: any, 
+  text: string, 
+  x: number, 
+  y: number, 
+  fontSize: number = FONT_CONFIG.DEFAULT_SIZE, 
+  color: string = '#000000',
+  backgroundColor?: string
+): Promise<void> {
+  // Use the optimized canvas renderer instead of inline CanvasKit operations
+  await renderTextOnImage(jimpImage, text, x, y, fontSize, color, backgroundColor);
+}
 
 // Viewport manipulation constants
-const MIN_ZOOM_FACTOR = 0.5;
-const MAX_ZOOM_FACTOR = 3.0;
-const TARGET_ELEMENT_COVERAGE = 0.4; // Target 40% viewport coverage
-const CENTER_THRESHOLD = 0.3; // Center element if >30% away from viewport center
+// Note: Viewport constants now imported from constants.js as VIEWPORT_CONFIG
 
 interface ViewportInfo {
   width: number;
@@ -51,8 +89,8 @@ interface ElementPosition {
 async function getViewportInfo(cdp: CDPClient): Promise<ViewportInfo> {
   const metrics = await cdp.send('Page.getLayoutMetrics');
   return {
-    width: metrics.cssVisualViewport?.clientWidth || 1280,
-    height: metrics.cssVisualViewport?.clientHeight || 1024,
+    width: metrics.cssVisualViewport?.clientWidth || VIEWPORT_CONFIG.DEFAULT_WIDTH,
+    height: metrics.cssVisualViewport?.clientHeight || VIEWPORT_CONFIG.DEFAULT_HEIGHT,
     deviceScaleFactor: 1, // Use default - actual device scale is handled by Chrome automatically
     mobile: false,
     scrollX: metrics.cssVisualViewport?.pageLeft || 0,
@@ -131,12 +169,12 @@ function calculateOptimalZoom(elementPosition: ElementPosition, viewport: Viewpo
   
   let zoomFactor = 1;
   
-  if (coverage < 0.1) {
+  if (coverage < VIEWPORT_CONFIG.ZOOM_IN_THRESHOLD) {
     // Element too small, zoom in
-    zoomFactor = Math.min(MAX_ZOOM_FACTOR, Math.sqrt(TARGET_ELEMENT_COVERAGE / coverage));
-  } else if (coverage > 0.8) {
+    zoomFactor = Math.min(VIEWPORT_CONFIG.MAX_ZOOM_FACTOR, Math.sqrt(VIEWPORT_CONFIG.TARGET_ELEMENT_COVERAGE / coverage));
+  } else if (coverage > VIEWPORT_CONFIG.ZOOM_OUT_THRESHOLD) {
     // Element too large, zoom out 
-    zoomFactor = Math.max(MIN_ZOOM_FACTOR, Math.sqrt(0.6 / coverage));
+    zoomFactor = Math.max(VIEWPORT_CONFIG.MIN_ZOOM_FACTOR, Math.sqrt(VIEWPORT_CONFIG.ZOOM_CALCULATION_RATIO / coverage));
   }
   
   return Math.round(zoomFactor * 100) / 100; // Round to 2 decimals
@@ -166,12 +204,12 @@ function calculateMultiElementZoom(elementPositions: ElementPosition[], viewport
   
   let zoomFactor = 1;
   
-  if (coverage < 0.2) {
+  if (coverage < VIEWPORT_CONFIG.MULTI_ZOOM_IN_THRESHOLD) {
     // Group too small, zoom in
-    zoomFactor = Math.min(MAX_ZOOM_FACTOR, Math.sqrt(0.6 / coverage));
-  } else if (coverage > 0.9) {
+    zoomFactor = Math.min(VIEWPORT_CONFIG.MAX_ZOOM_FACTOR, Math.sqrt(VIEWPORT_CONFIG.ZOOM_CALCULATION_RATIO / coverage));
+  } else if (coverage > VIEWPORT_CONFIG.MULTI_ZOOM_OUT_THRESHOLD) {
     // Group too large, zoom out
-    zoomFactor = Math.max(MIN_ZOOM_FACTOR, Math.sqrt(0.7 / coverage));
+    zoomFactor = Math.max(VIEWPORT_CONFIG.MIN_ZOOM_FACTOR, Math.sqrt(VIEWPORT_CONFIG.MULTI_ZOOM_OUT_RATIO / coverage));
   }
   
   return Math.round(zoomFactor * 100) / 100;
@@ -184,8 +222,8 @@ function shouldCenterElement(elementPosition: ElementPosition, viewport: Viewpor
   const distanceFromCenterX = Math.abs(elementPosition.centerX - viewportCenterX);
   const distanceFromCenterY = Math.abs(elementPosition.centerY - viewportCenterY);
   
-  const thresholdX = viewport.width * CENTER_THRESHOLD;
-  const thresholdY = viewport.height * CENTER_THRESHOLD;
+  const thresholdX = viewport.width * VIEWPORT_CONFIG.CENTER_THRESHOLD;
+  const thresholdY = viewport.height * VIEWPORT_CONFIG.CENTER_THRESHOLD;
   
   return distanceFromCenterX > thresholdX || distanceFromCenterY > thresholdY;
 }
@@ -227,79 +265,74 @@ async function drawHighlightOnScreenshot(
     // Load screenshot into Jimp
     const image = await Jimp.read(screenshotBuffer);
     
-    // Transform coordinates using our clean coordinate transformation pipeline
-    let adjustedBoxModel = boxModel;
+    // Use canvas for text rendering since Jimp 1.x font loading is unreliable
+    let font = 'available'; // We'll use canvas for all text rendering
     
-    // Step 1: Calculate expected dimensions and scale factors
-    let expectedWidth = viewportInfo.width;
-    let expectedHeight = viewportInfo.height;
-    
-    // If clipped, expected dimensions are the clip dimensions
-    if (clipRegion) {
-      expectedWidth = clipRegion.width;
-      expectedHeight = clipRegion.height;
-    }
-    
-    const actualScaleX = image.bitmap.width / expectedWidth;
-    const actualScaleY = image.bitmap.height / expectedHeight;
+    // Transform coordinates using the coordinate utilities
+    const scalingFactors = calculateScalingFactors(
+      viewportInfo,
+      image.bitmap.width,
+      image.bitmap.height,
+      clipRegion
+    );
     
     // Add comprehensive diagnostic logging
     console.error(`=== Screenshot Analysis ===`);
     console.error(`  Viewport: ${viewportInfo.width}x${viewportInfo.height}`);
     console.error(`  Clip region: ${clipRegion ? `${clipRegion.x},${clipRegion.y} ${clipRegion.width}x${clipRegion.height}` : 'none'}`);
-    console.error(`  Expected dimensions: ${expectedWidth}x${expectedHeight}`);
     console.error(`  Actual screenshot: ${image.bitmap.width}x${image.bitmap.height}`);
-    console.error(`  Scale factors: X=${actualScaleX.toFixed(3)}, Y=${actualScaleY.toFixed(3)}`);
+    console.error(`  Scale factors: X=${scalingFactors.scaleX.toFixed(3)}, Y=${scalingFactors.scaleY.toFixed(3)}`);
     console.error(`  Box model margin before: ${boxModel.margin.x},${boxModel.margin.y} ${boxModel.margin.width}x${boxModel.margin.height}`);
     
-    // Step 2: Apply viewport-to-screenshot coordinate scaling if needed
-    if (Math.abs(actualScaleX - 1) > 0.01 || Math.abs(actualScaleY - 1) > 0.01) {
-      adjustedBoxModel = {
-        content: scaleRect(adjustedBoxModel.content, actualScaleX, actualScaleY),
-        padding: scaleRect(adjustedBoxModel.padding, actualScaleX, actualScaleY),
-        border: scaleRect(adjustedBoxModel.border, actualScaleX, actualScaleY),
-        margin: scaleRect(adjustedBoxModel.margin, actualScaleX, actualScaleY)
-      };
-      console.error(`  Box model margin after scaling: ${adjustedBoxModel.margin.x},${adjustedBoxModel.margin.y} ${adjustedBoxModel.margin.width}x${adjustedBoxModel.margin.height}`);
-    }
+    // Apply coordinate transformation using the utilities
+    let adjustedBoxModel = transformBoxModel(boxModel, scalingFactors, clipRegion);
+    console.error(`  Box model margin after transform: ${adjustedBoxModel.margin.x},${adjustedBoxModel.margin.y} ${adjustedBoxModel.margin.width}x${adjustedBoxModel.margin.height}`);
     
     // Step 3: Apply clip region adjustment if screenshot is clipped
     if (clipRegion) {
       // Scale the clip region by the same device pixel ratio as the coordinates
-      const scaledClip = (Math.abs(actualScaleX - 1) > 0.01 || Math.abs(actualScaleY - 1) > 0.01) ? {
-        x: clipRegion.x * actualScaleX,
-        y: clipRegion.y * actualScaleY,
-        width: clipRegion.width * actualScaleX,
-        height: clipRegion.height * actualScaleY
+      const scaledClip = (Math.abs(scalingFactors.scaleX - 1) > 0.01 || Math.abs(scalingFactors.scaleY - 1) > 0.01) ? {
+        x: clipRegion.x * scalingFactors.scaleX,
+        y: clipRegion.y * scalingFactors.scaleY,
+        width: clipRegion.width * scalingFactors.scaleX,
+        height: clipRegion.height * scalingFactors.scaleY
       } : clipRegion;
       
       console.error(`  Scaled clip: ${scaledClip.x},${scaledClip.y} ${scaledClip.width}x${scaledClip.height}`);
       
       adjustedBoxModel = {
-        content: adjustRect(adjustedBoxModel.content, scaledClip),
-        padding: adjustRect(adjustedBoxModel.padding, scaledClip),
-        border: adjustRect(adjustedBoxModel.border, scaledClip),
-        margin: adjustRect(adjustedBoxModel.margin, scaledClip)
+        content: adjustRectForClipping(adjustedBoxModel.content, scaledClip),
+        padding: adjustRectForClipping(adjustedBoxModel.padding, scaledClip),
+        border: adjustRectForClipping(adjustedBoxModel.border, scaledClip),
+        margin: adjustRectForClipping(adjustedBoxModel.margin, scaledClip)
       };
       console.error(`  Box model margin after clip adjust: ${adjustedBoxModel.margin.x},${adjustedBoxModel.margin.y} ${adjustedBoxModel.margin.width}x${adjustedBoxModel.margin.height}`);
     }
     
-    // Draw highlight layers (outermost to innermost)
-    // Margin - Yellow
-    drawRectangleOutline(image, adjustedBoxModel.margin, 0xFFFF00FF, 1);
+    // Draw LLM-optimized box model highlighting (high contrast, pure colors)
+    // Using Set-of-Mark approach with distinct IDs and thick borders
     
-    // Border - Red  
-    drawRectangleOutline(image, adjustedBoxModel.border, 0xFF0000FF, 2);
+    // Margin - ID:1, Pure Red
+    drawRectangleOutline(image, adjustedBoxModel.margin, BOX_MODEL_COLORS.MARGIN, BOX_MODEL_THICKNESS.MARGIN);
     
-    // Padding - Green
-    drawRectangleOutline(image, adjustedBoxModel.padding, 0x00FF00FF, 1);
+    // Border - ID:2, Pure Green
+    drawRectangleOutline(image, adjustedBoxModel.border, BOX_MODEL_COLORS.BORDER, BOX_MODEL_THICKNESS.BORDER);
     
-    // Content - Blue with fill
-    drawRectangleFilled(image, adjustedBoxModel.content, 0x0078FF44);
-    drawRectangleOutline(image, adjustedBoxModel.content, 0x0078FFFF, 2);
+    // Padding - ID:3, Pure Blue  
+    drawRectangleOutline(image, adjustedBoxModel.padding, BOX_MODEL_COLORS.PADDING, BOX_MODEL_THICKNESS.PADDING);
     
-    // Draw rulers extending from the element
-    drawRulers(image, adjustedBoxModel.border, image.bitmap.width, image.bitmap.height);
+    // Content - ID:4, Pure Yellow with solid fill
+    drawRectangleFilled(image, adjustedBoxModel.content, BOX_MODEL_COLORS.CONTENT);
+    drawRectangleOutline(image, adjustedBoxModel.content, BOX_MODEL_COLORS.CONTENT, BOX_MODEL_THICKNESS.CONTENT);
+    
+    // Add simple value labels on each highlighted area
+    await drawBoxModelLabels(image, adjustedBoxModel, scalingFactors.scaleX, scalingFactors.scaleY, drawTextOnJimpImage);
+    
+    // Draw edge rulers with tick marks
+    await drawEdgeRulers(image, font, viewportInfo, scalingFactors.scaleX, scalingFactors.scaleY, clipRegion);
+    
+    // Draw crosshair rulers extending from the element
+    await drawRulers(image, font, adjustedBoxModel.border, image.bitmap.width, image.bitmap.height, scalingFactors.scaleX, scalingFactors.scaleY, clipRegion);
     
     // Return modified image as buffer
     return await image.getBuffer('image/png');
@@ -311,119 +344,349 @@ async function drawHighlightOnScreenshot(
   }
 }
 
-function scaleRect(rect: Rect, scaleX: number, scaleY?: number): Rect {
-  const actualScaleY = scaleY !== undefined ? scaleY : scaleX;
-  return {
-    x: rect.x * scaleX,
-    y: rect.y * actualScaleY,
-    width: rect.width * scaleX,
-    height: rect.height * actualScaleY
-  };
-}
+// scaleRect and adjustRect functions moved to coordinate-utils.ts
 
-function adjustRect(rect: Rect, clip: { x: number; y: number; width: number; height: number }): Rect {
-  return {
-    x: Math.max(0, rect.x - clip.x),
-    y: Math.max(0, rect.y - clip.y),
-    width: rect.width,
-    height: rect.height
-  };
-}
+// drawRectangleOutline function moved to drawing-utils.ts
 
+// drawRectangleFilled function moved to drawing-utils.ts
 
-function drawRectangleOutline(image: any, rect: Rect, color: number, thickness: number): void {
-  const { x, y, width, height } = rect;
-  
-  // Bounds check
-  const imgWidth = image.bitmap.width;
-  const imgHeight = image.bitmap.height;
-  if (x >= imgWidth || y >= imgHeight || x + width <= 0 || y + height <= 0) {
-    return;
-  }
-  
-  // Top and bottom edges
-  for (let px = Math.max(0, x); px < Math.min(imgWidth, x + width); px++) {
-    for (let t = 0; t < thickness; t++) {
-      if (y + t >= 0 && y + t < imgHeight) {
-        image.setPixelColor(color >>> 0, px, y + t);
-      }
-      if (y + height - 1 - t >= 0 && y + height - 1 - t < imgHeight) {
-        image.setPixelColor(color >>> 0, px, y + height - 1 - t);
-      }
-    }
-  }
-  
-  // Left and right edges
-  for (let py = Math.max(0, y); py < Math.min(imgHeight, y + height); py++) {
-    for (let t = 0; t < thickness; t++) {
-      if (x + t >= 0 && x + t < imgWidth) {
-        image.setPixelColor(color >>> 0, x + t, py);
-      }
-      if (x + width - 1 - t >= 0 && x + width - 1 - t < imgWidth) {
-        image.setPixelColor(color >>> 0, x + width - 1 - t, py);
-      }
-    }
-  }
-}
+// drawBoxModelLabels function moved to drawing-utils.ts
 
-function drawRectangleFilled(image: any, rect: Rect, color: number): void {
-  const { x, y, width, height } = rect;
+// drawStructuredLabel and drawCornerMarkers functions moved to drawing-utils.ts
+
+// Legacy simple label function moved to drawing-utils.ts
+
+async function drawEdgeRulers(
+  image: any,
+  font: any,
+  viewportInfo: ViewportInfo,
+  actualScaleX: number, 
+  actualScaleY: number,
+  clipRegion?: { x: number; y: number; width: number; height: number }
+): Promise<void> {
   const imgWidth = image.bitmap.width;
   const imgHeight = image.bitmap.height;
   
-  for (let px = Math.max(0, x); px < Math.min(imgWidth, x + width); px++) {
-    for (let py = Math.max(0, y); py < Math.min(imgHeight, y + height); py++) {
-      // Blend with existing pixel for transparency effect
-      const existing = image.getPixelColor(px, py);
-      const blended = blendColors(existing, color);
-      image.setPixelColor(blended, px, py);
+  // Enhanced constants for better LLM visibility
+  const RULER_THICKNESS = RULER_CONFIG.THICKNESS;
+  const MAJOR_TICK_LENGTH = RULER_CONFIG.MAJOR_TICK_LENGTH;
+  const MINOR_TICK_LENGTH = RULER_CONFIG.MINOR_TICK_LENGTH;
+  const MAJOR_TICK_SPACING = RULER_CONFIG.MAJOR_TICK_SPACING; // Every 100px for main coordinates
+  const MINOR_TICK_SPACING = RULER_CONFIG.MINOR_TICK_SPACING; // Every 50px for intermediate marks
+  const rulerColor = TEXT_COLORS.BLACK; // Pure black for maximum contrast
+  const tickColor = TEXT_COLORS.BLACK; // Pure black for ticks
+  const minorTickColor = TEXT_COLORS.GRAY_DARK; // Dark gray for minor ticks
+  const outlineColor = TEXT_COLORS.WHITE; // White outline for dark backgrounds
+  
+  // Calculate viewport coordinate range visible in screenshot
+  const startViewportX = clipRegion ? clipRegion.x : 0;
+  const startViewportY = clipRegion ? clipRegion.y : 0;
+  const endViewportX = startViewportX + (imgWidth / actualScaleX);
+  const endViewportY = startViewportY + (imgHeight / actualScaleY);
+  
+  // Draw top edge ruler with white outline (horizontal)
+  for (let x = 0; x < imgWidth; x++) {
+    for (let thickness = 0; thickness < RULER_THICKNESS + 2; thickness++) {
+      if (thickness < imgHeight) {
+        if (thickness === 0 || thickness === RULER_THICKNESS + 1) {
+          // White outline
+          image.setPixelColor(outlineColor >>> 0, x, thickness);
+        } else {
+          // Black ruler
+          image.setPixelColor(rulerColor >>> 0, x, thickness);
+        }
+      }
+    }
+  }
+  
+  // Draw left edge ruler with white outline (vertical)
+  for (let y = 0; y < imgHeight; y++) {
+    for (let thickness = 0; thickness < RULER_THICKNESS + 2; thickness++) {
+      if (thickness < imgWidth) {
+        if (thickness === 0 || thickness === RULER_THICKNESS + 1) {
+          // White outline
+          image.setPixelColor(outlineColor >>> 0, thickness, y);
+        } else {
+          // Black ruler
+          image.setPixelColor(rulerColor >>> 0, thickness, y);
+        }
+      }
+    }
+  }
+  
+  // Horizontal ticks on top ruler - enhanced visibility
+  for (let viewportX = Math.ceil(startViewportX / MAJOR_TICK_SPACING) * MAJOR_TICK_SPACING; 
+       viewportX <= endViewportX; 
+       viewportX += MAJOR_TICK_SPACING) {
+    const screenX = Math.floor((viewportX - startViewportX) * actualScaleX);
+    if (screenX >= 2 && screenX < imgWidth - 2) {
+      // Draw enhanced major tick with white outline
+      for (let tickX = screenX - 2; tickX <= screenX + 2; tickX++) {
+        if (tickX >= 0 && tickX < imgWidth) {
+          for (let tickY = 0; tickY < MAJOR_TICK_LENGTH + 2; tickY++) {
+            if (tickY < imgHeight) {
+              if (tickY === 0 || tickY === MAJOR_TICK_LENGTH + 1 || 
+                  tickX === screenX - 2 || tickX === screenX + 2) {
+                // White outline
+                image.setPixelColor(outlineColor >>> 0, tickX, tickY);
+              } else if (Math.abs(tickX - screenX) <= 1) {
+                // Black tick mark (3px wide)
+                image.setPixelColor(tickColor >>> 0, tickX, tickY);
+              }
+            }
+          }
+        }
+      }
+      
+      // Add coordinate label with white background for better readability
+      if (font && screenX > 25 && screenX < imgWidth - 40) {
+        const labelText = viewportX.toString();
+        const labelX = screenX - 15;
+        const labelY = MAJOR_TICK_LENGTH + 4;
+        const labelWidth = labelText.length * 12; // Approximate character width
+        const labelHeight = 16; // Approximate font height
+        
+        // Draw white background rectangle
+        for (let x = labelX - 2; x < labelX + labelWidth + 2; x++) {
+          for (let y = labelY - 2; y < labelY + labelHeight + 2; y++) {
+            if (x >= 0 && x < imgWidth && y >= 0 && y < imgHeight) {
+              image.setPixelColor(TEXT_COLORS.WHITE_SEMI >>> 0, x, y); // Semi-transparent white
+            }
+          }
+        }
+        
+        // Print the coordinate value using canvas-based text rendering
+        await drawTextOnJimpImage(image, labelText, labelX, labelY, 16, '#000000', 'rgba(255,255,255,0.9)');
+      }
+    }
+  }
+  
+  // Vertical ticks on left ruler - enhanced visibility
+  for (let viewportY = Math.ceil(startViewportY / MAJOR_TICK_SPACING) * MAJOR_TICK_SPACING;
+       viewportY <= endViewportY;
+       viewportY += MAJOR_TICK_SPACING) {
+    const screenY = Math.floor((viewportY - startViewportY) * actualScaleY);
+    if (screenY >= 2 && screenY < imgHeight - 2) {
+      // Draw enhanced major tick with white outline
+      for (let tickY = screenY - 2; tickY <= screenY + 2; tickY++) {
+        if (tickY >= 0 && tickY < imgHeight) {
+          for (let tickX = 0; tickX < MAJOR_TICK_LENGTH + 2; tickX++) {
+            if (tickX < imgWidth) {
+              if (tickX === 0 || tickX === MAJOR_TICK_LENGTH + 1 || 
+                  tickY === screenY - 2 || tickY === screenY + 2) {
+                // White outline
+                image.setPixelColor(outlineColor >>> 0, tickX, tickY);
+              } else if (Math.abs(tickY - screenY) <= 1) {
+                // Black tick mark (3px wide)
+                image.setPixelColor(tickColor >>> 0, tickX, tickY);
+              }
+            }
+          }
+        }
+      }
+      
+      // Add coordinate label with white background for better readability
+      if (font && screenY > 25 && screenY < imgHeight - 20) {
+        const labelText = viewportY.toString();
+        const labelX = MAJOR_TICK_LENGTH + 4;
+        const labelY = screenY - 8;
+        const labelWidth = labelText.length * 12; // Approximate character width
+        const labelHeight = 16; // Approximate font height
+        
+        // Draw white background rectangle
+        for (let x = labelX - 2; x < labelX + labelWidth + 2; x++) {
+          for (let y = labelY - 2; y < labelY + labelHeight + 2; y++) {
+            if (x >= 0 && x < imgWidth && y >= 0 && y < imgHeight) {
+              image.setPixelColor(TEXT_COLORS.WHITE_SEMI >>> 0, x, y); // Semi-transparent white
+            }
+          }
+        }
+        
+        // Print the coordinate value using canvas-based text rendering
+        await drawTextOnJimpImage(image, labelText, labelX, labelY, 16, '#000000', 'rgba(255,255,255,0.9)');
+      }
+    }
+  }
+  
+  // Add minor ticks for better granularity - horizontal
+  for (let viewportX = Math.ceil(startViewportX / MINOR_TICK_SPACING) * MINOR_TICK_SPACING; 
+       viewportX <= endViewportX; 
+       viewportX += MINOR_TICK_SPACING) {
+    // Skip if this is a major tick position
+    if (viewportX % MAJOR_TICK_SPACING !== 0) {
+      const screenX = Math.floor((viewportX - startViewportX) * actualScaleX);
+      if (screenX >= 1 && screenX < imgWidth - 1) {
+        // Draw smaller minor tick
+        for (let tickX = screenX - 1; tickX <= screenX + 1; tickX++) {
+          if (tickX >= 0 && tickX < imgWidth) {
+            for (let tickY = 0; tickY < MINOR_TICK_LENGTH + 1; tickY++) {
+              if (tickY < imgHeight) {
+                if (tickY === 0 || tickY === MINOR_TICK_LENGTH || 
+                    tickX === screenX - 1 || tickX === screenX + 1) {
+                  // White outline
+                  image.setPixelColor(outlineColor >>> 0, tickX, tickY);
+                } else if (Math.abs(tickX - screenX) === 0) {
+                  // Gray minor tick mark (1px wide)
+                  image.setPixelColor(minorTickColor >>> 0, tickX, tickY);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // Add minor ticks for better granularity - vertical
+  for (let viewportY = Math.ceil(startViewportY / MINOR_TICK_SPACING) * MINOR_TICK_SPACING;
+       viewportY <= endViewportY;
+       viewportY += MINOR_TICK_SPACING) {
+    // Skip if this is a major tick position
+    if (viewportY % MAJOR_TICK_SPACING !== 0) {
+      const screenY = Math.floor((viewportY - startViewportY) * actualScaleY);
+      if (screenY >= 1 && screenY < imgHeight - 1) {
+        // Draw smaller minor tick
+        for (let tickY = screenY - 1; tickY <= screenY + 1; tickY++) {
+          if (tickY >= 0 && tickY < imgHeight) {
+            for (let tickX = 0; tickX < MINOR_TICK_LENGTH + 1; tickX++) {
+              if (tickX < imgWidth) {
+                if (tickX === 0 || tickX === MINOR_TICK_LENGTH || 
+                    tickY === screenY - 1 || tickY === screenY + 1) {
+                  // White outline
+                  image.setPixelColor(outlineColor >>> 0, tickX, tickY);
+                } else if (Math.abs(tickY - screenY) === 0) {
+                  // Gray minor tick mark (1px wide)
+                  image.setPixelColor(minorTickColor >>> 0, tickX, tickY);
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
 
-function drawRulers(image: any, elementRect: Rect, imgWidth: number, imgHeight: number): void {
-  const rulerColor = 0xFF00FFFF; // Magenta
+async function drawRulers(
+  image: any, 
+  font: any,
+  elementRect: Rect, 
+  imgWidth: number, 
+  imgHeight: number,
+  actualScaleX: number, 
+  actualScaleY: number,
+  clipRegion?: { x: number; y: number; width: number; height: number }
+): Promise<void> {
+  // Enhanced crosshair constants for better LLM visibility
+  const CROSSHAIR_THICKNESS = CROSSHAIR_CONFIG.THICKNESS;
+  const DASH_LENGTH = CROSSHAIR_CONFIG.DASH_LENGTH;
+  const GAP_LENGTH = CROSSHAIR_CONFIG.GAP_LENGTH;
+  const rulerColor = CROSSHAIR_CONFIG.COLOR; // Enhanced magenta with better opacity
+  const outlineColor = TEXT_COLORS.WHITE; // White outline for contrast
   
-  // Vertical ruler at element's left edge
+  // Calculate element center and dimensions in viewport coordinates
+  const viewportCenterX = clipRegion ? 
+    (elementRect.x + elementRect.width / 2) / actualScaleX + clipRegion.x :
+    (elementRect.x + elementRect.width / 2) / actualScaleX;
+  const viewportCenterY = clipRegion ?
+    (elementRect.y + elementRect.height / 2) / actualScaleY + clipRegion.y :
+    (elementRect.y + elementRect.height / 2) / actualScaleY;
+  const viewportWidth = elementRect.width / actualScaleX;
+  const viewportHeight = elementRect.height / actualScaleY;
+  
+  // Enhanced vertical crosshair at element's center with dashed pattern
   const centerX = Math.floor(elementRect.x + elementRect.width / 2);
-  if (centerX >= 0 && centerX < imgWidth) {
+  if (centerX >= 1 && centerX < imgWidth - 1) {
     for (let y = 0; y < imgHeight; y++) {
-      image.setPixelColor(rulerColor >>> 0, centerX, y);
+      const isDash = Math.floor(y / (DASH_LENGTH + GAP_LENGTH)) % 2 === 0 && 
+                     (y % (DASH_LENGTH + GAP_LENGTH)) < DASH_LENGTH;
+      if (isDash) {
+        // Draw with outline for better visibility
+        for (let thickness = -1; thickness <= 1; thickness++) {
+          const drawX = centerX + thickness;
+          if (drawX >= 0 && drawX < imgWidth) {
+            if (Math.abs(thickness) === 1) {
+              // White outline
+              image.setPixelColor(outlineColor >>> 0, drawX, y);
+            } else {
+              // Magenta center line
+              image.setPixelColor(rulerColor >>> 0, drawX, y);
+            }
+          }
+        }
+      }
     }
   }
   
-  // Horizontal ruler at element's center
+  // Enhanced horizontal crosshair at element's center with dashed pattern
   const centerY = Math.floor(elementRect.y + elementRect.height / 2);
-  if (centerY >= 0 && centerY < imgHeight) {
+  if (centerY >= 1 && centerY < imgHeight - 1) {
     for (let x = 0; x < imgWidth; x++) {
-      image.setPixelColor(rulerColor >>> 0, x, centerY);
+      const isDash = Math.floor(x / (DASH_LENGTH + GAP_LENGTH)) % 2 === 0 && 
+                     (x % (DASH_LENGTH + GAP_LENGTH)) < DASH_LENGTH;
+      if (isDash) {
+        // Draw with outline for better visibility
+        for (let thickness = -1; thickness <= 1; thickness++) {
+          const drawY = centerY + thickness;
+          if (drawY >= 0 && drawY < imgHeight) {
+            if (Math.abs(thickness) === 1) {
+              // White outline
+              image.setPixelColor(outlineColor >>> 0, x, drawY);
+            } else {
+              // Magenta center line
+              image.setPixelColor(rulerColor >>> 0, x, drawY);
+            }
+          }
+        }
+      }
     }
+  }
+  
+  // Add enhanced coordinate label at intersection with background
+  if (font && centerX >= 30 && centerX < imgWidth - 80 && centerY >= 30 && centerY < imgHeight - 30) {
+    const coordText = `(${Math.floor(viewportCenterX)},${Math.floor(viewportCenterY)})`;
+    
+    // Draw semi-transparent background for better readability
+    const labelX = centerX + 8;
+    const labelY = centerY + 8;
+    const labelWidth = coordText.length * 7; // Approximate width
+    const labelHeight = 14;
+    
+    // Background rectangle
+    for (let x = labelX - 2; x < labelX + labelWidth + 2; x++) {
+      for (let y = labelY - 2; y < labelY + labelHeight + 2; y++) {
+        if (x >= 0 && x < imgWidth && y >= 0 && y < imgHeight) {
+          image.setPixelColor(TEXT_COLORS.WHITE_FILL >>> 0, x, y); // Semi-transparent white
+        }
+      }
+    }
+    
+    await drawTextOnJimpImage(image, coordText, labelX, labelY, 18, '#000000', 'rgba(255,255,255,0.9)');
+  }
+  
+  // Add enhanced dimension label near the element with background
+  if (font && centerX >= 30 && centerX < imgWidth - 100 && centerY >= 45) {
+    const dimensionText = `${Math.floor(viewportWidth)}×${Math.floor(viewportHeight)}px`;
+    
+    // Draw semi-transparent background for better readability
+    const labelX = centerX + 8;
+    const labelY = centerY - 30;
+    const labelWidth = dimensionText.length * 7; // Approximate width
+    const labelHeight = 14;
+    
+    // Background rectangle
+    for (let x = labelX - 2; x < labelX + labelWidth + 2; x++) {
+      for (let y = labelY - 2; y < labelY + labelHeight + 2; y++) {
+        if (x >= 0 && x < imgWidth && y >= 0 && y < imgHeight) {
+          image.setPixelColor(TEXT_COLORS.WHITE_FILL >>> 0, x, y); // Semi-transparent white
+        }
+      }
+    }
+    
+    await drawTextOnJimpImage(image, dimensionText, labelX, labelY, 18, '#000000', 'rgba(255,255,255,0.9)');
   }
 }
 
-function blendColors(background: number, foreground: number): number {
-  // Simple alpha blending
-  const bgR = (background >> 24) & 0xFF;
-  const bgG = (background >> 16) & 0xFF;
-  const bgB = (background >> 8) & 0xFF;
-  const bgA = background & 0xFF;
-  
-  const fgR = (foreground >> 24) & 0xFF;
-  const fgG = (foreground >> 16) & 0xFF;
-  const fgB = (foreground >> 8) & 0xFF;
-  const fgA = foreground & 0xFF;
-  
-  const alpha = fgA / 255;
-  const invAlpha = 1 - alpha;
-  
-  const r = Math.floor(fgR * alpha + bgR * invAlpha);
-  const g = Math.floor(fgG * alpha + bgG * invAlpha);
-  const b = Math.floor(fgB * alpha + bgB * invAlpha);
-  const a = Math.max(fgA, bgA);
-  
-  // Convert to unsigned 32-bit integer to avoid negative values
-  return ((r << 24) | (g << 16) | (b << 8) | a) >>> 0;
-}
 
 /**
  * Inspects DOM elements on a webpage, automatically detecting single vs multiple elements.
@@ -616,7 +879,7 @@ async function inspectSingleElement(
     if (autoZoom || zoomFactor) {
       if (zoomFactor) {
         // Clamp manual zoom factor to valid range
-        appliedZoomFactor = Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, zoomFactor));
+        appliedZoomFactor = Math.min(VIEWPORT_CONFIG.MAX_ZOOM_FACTOR, Math.max(VIEWPORT_CONFIG.MIN_ZOOM_FACTOR, zoomFactor));
       } else {
         appliedZoomFactor = calculateOptimalZoom(elementPosition, viewportInfo);
       }
@@ -821,7 +1084,7 @@ async function inspectMultipleElements(
     if (autoZoom || zoomFactor) {
       if (zoomFactor) {
         // Clamp manual zoom factor to valid range
-        appliedZoomFactor = Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, zoomFactor));
+        appliedZoomFactor = Math.min(VIEWPORT_CONFIG.MAX_ZOOM_FACTOR, Math.max(VIEWPORT_CONFIG.MIN_ZOOM_FACTOR, zoomFactor));
       } else {
         appliedZoomFactor = calculateMultiElementZoom(elementPositions, viewportInfo);
       }
@@ -1056,7 +1319,7 @@ function calculatePairwiseRelationship(
   }
   
   // Calculate alignment (with tolerance for "close enough")
-  const tolerance = ALIGNMENT_TOLERANCE;
+  const tolerance = VISUAL_CONFIG.ALIGNMENT_TOLERANCE;
   const alignment = {
     top: Math.abs(box1.y - box2.y) <= tolerance,
     bottom: Math.abs((box1.y + box1.height) - (box2.y + box2.height)) <= tolerance,
@@ -1264,7 +1527,7 @@ function filterCascadeRules(
 
 function truncateValue(property: string, value: string): string {
   // Truncate very long values to reduce token usage
-  if (value.length <= 100) {
+  if (value.length <= ELEMENT_LIMITS.MAX_PROPERTY_LENGTH) {
     return value;
   }
   
