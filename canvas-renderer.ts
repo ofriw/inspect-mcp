@@ -52,11 +52,11 @@ export class CanvasRenderer {
 
     } catch (error) {
       console.error('Failed to initialize CanvasKit:', error);
-      // Set fallback state
+      // Set fallback state - allow fallback rendering to proceed
       CanvasKit = null;
       fontMgr = null;
       isInitialized = false;
-      throw error;
+      // Don't throw the error - this allows fallback text rendering
     }
   }
 
@@ -90,14 +90,14 @@ export class CanvasRenderer {
       }
     } catch (error) {
       console.error('Failed to load JetBrains Mono font:', error);
-      // Fallback to empty font manager
+      // Fallback to empty font manager - don't throw error to allow fallback rendering
       try {
         fontMgr = CanvasKit.FontMgr.FromData([]);
       } catch (fallbackError) {
         console.error('Failed to create fallback font manager:', fallbackError);
         fontMgr = null;
       }
-      throw error;
+      // Don't throw the error - allow fallback rendering to proceed
     }
   }
 
