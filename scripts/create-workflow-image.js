@@ -113,7 +113,46 @@ async function createWorkflowImages() {
     }
 
     console.log(`\n✅ Successfully captured ${successCount}/${workflowSteps.length} workflow step images`);
-    console.log('Note: You can create a GIF from these step images using tools like ImageMagick or online converters');
+
+    // Generate animated GIF from workflow steps
+    if (successCount > 0) {
+      try {
+        console.log('\n🎬 Creating animated GIF from workflow steps...');
+
+        // Check if ImageMagick is available
+        await execAsync('which magick || which convert');
+
+        // Create animated GIF with 1.5 second delay per frame
+        const stepFiles = workflowSteps
+          .map(step => join(projectRoot, 'docs', 'images', `${step.name}.png`))
+          .join(' ');
+
+        const gifPath = join(projectRoot, 'docs', 'images', 'css-workflow.gif');
+
+        // Use magick (v7) or convert (v6) depending on what's available
+        const command = `magick -delay 150 -loop 0 ${stepFiles} "${gifPath}"`;
+
+        // Also create PNG version by copying the gif to .png extension for README compatibility
+        const pngPath = join(projectRoot, 'docs', 'images', 'css-workflow.png');
+
+        await execAsync(command);
+
+        // Copy GIF to PNG extension for README compatibility
+        await execAsync(`cp "${gifPath}" "${pngPath}"`);
+
+        console.log(`✅ Created animated GIF: css-workflow.gif`);
+        console.log(`✅ Created README version: css-workflow.png`);
+        console.log('   • 1.5 second delay between frames');
+        console.log('   • Infinite loop');
+        console.log('   • Shows the complete CSS iteration workflow');
+
+      } catch (error) {
+        console.warn('⚠️ Could not create animated GIF:', error.message);
+        console.log('Install ImageMagick to enable automatic GIF generation:');
+        console.log('   brew install imagemagick');
+        console.log('Note: Individual workflow step images are still available for manual GIF creation');
+      }
+    }
 
   } catch (error) {
     console.error('❌ Workflow image capture failed:', error);

@@ -29,7 +29,7 @@ Inspect-MCP is an MCP (Model Context Protocol) server that enables AI coding age
 
 Inspect-MCP enables the same iterative workflow you'd use in browser DevTools:
 
-<img src="docs/images/css-workflow.png" width="700" alt="Demonstration of the CSS editing workflow showing inspect element, test CSS changes, verify results, and iterate until perfect">
+<img src="docs/images/css-workflow.gif" width="700" alt="Demonstration of the CSS editing workflow showing inspect element, test CSS changes, verify results, and iterate until perfect">
 
 *The iterative CSS editing workflow in action - just like using browser DevTools*
 
