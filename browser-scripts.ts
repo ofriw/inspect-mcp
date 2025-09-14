@@ -76,21 +76,6 @@ export const BrowserScripts = {
     })()
   `,
 
-  /**
-   * Centers an element in the viewport
-   */
-  centerElement: (uniqueId: string) => `
-    (function() {
-      const element = document.querySelector('[data-inspect-id="${uniqueId}"]');
-      if (element) {
-        element.scrollIntoView({
-          block: "center",
-          inline: "center",
-          behavior: "instant"
-        });
-      }
-    })();
-  `,
 
   /**
    * Centers multiple elements by finding their bounding box

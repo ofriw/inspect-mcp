@@ -66,14 +66,16 @@ export function viewportToScreenshot(
   scalingFactors: ScalingFactors,
   clipRegion?: ClipRegion
 ): Rect {
-  // Step 1: Scale the coordinates from viewport to screenshot space
-  let transformedRect = scaleRect(rect, scalingFactors.scaleX, scalingFactors.scaleY);
-  
-  // Step 2: Adjust for clipping if needed
+  let transformedRect = rect;
+
+  // Step 1: Adjust for clipping first (translate from viewport to clip-relative coordinates)
   if (clipRegion) {
     transformedRect = adjustRectForClipping(transformedRect, clipRegion);
   }
-  
+
+  // Step 2: Then scale the clip-relative coordinates to screenshot space
+  transformedRect = scaleRect(transformedRect, scalingFactors.scaleX, scalingFactors.scaleY);
+
   return transformedRect;
 }
 

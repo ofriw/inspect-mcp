@@ -1,4 +1,4 @@
-import type { InspectElementArgs, InspectionResult, MultiInspectionResult, ElementInspection, ElementRelationship, BoxModel, CascadeRule, GroupedStyles, Rect, ElementMetrics } from './types.js';
+import type { InspectElementArgs, MultiInspectionResult, ElementInspection, ElementRelationship, BoxModel, CascadeRule, GroupedStyles, Rect, ElementMetrics } from './types.js';
 import { ensureChromeWithCDP, connectToTarget, CDPClient } from './cdp-client.js';
 import { 
   DEFAULT_PROPERTY_GROUPS, 
@@ -150,11 +150,6 @@ function convertElementMetricsToBoxModel(metrics: ElementMetrics): BoxModel {
   };
 }
 
-async function centerElement(cdp: CDPClient, uniqueId: string): Promise<void> {
-  await cdp.send('Runtime.evaluate', {
-    expression: BrowserScripts.centerElement(uniqueId)
-  });
-}
 
 async function centerMultipleElements(cdp: CDPClient, uniqueIds: string[]): Promise<void> {
   await cdp.send('Runtime.evaluate', {
@@ -162,23 +157,6 @@ async function centerMultipleElements(cdp: CDPClient, uniqueIds: string[]): Prom
   });
 }
 
-function calculateOptimalZoom(elementPosition: ElementPosition, viewport: ViewportInfo): number {
-  const elementArea = elementPosition.width * elementPosition.height;
-  const viewportArea = viewport.width * viewport.height;
-  const coverage = elementArea / viewportArea;
-  
-  let zoomFactor = 1;
-  
-  if (coverage < VIEWPORT_CONFIG.ZOOM_IN_THRESHOLD) {
-    // Element too small, zoom in
-    zoomFactor = Math.min(VIEWPORT_CONFIG.MAX_ZOOM_FACTOR, Math.sqrt(VIEWPORT_CONFIG.TARGET_ELEMENT_COVERAGE / coverage));
-  } else if (coverage > VIEWPORT_CONFIG.ZOOM_OUT_THRESHOLD) {
-    // Element too large, zoom out 
-    zoomFactor = Math.max(VIEWPORT_CONFIG.MIN_ZOOM_FACTOR, Math.sqrt(VIEWPORT_CONFIG.ZOOM_CALCULATION_RATIO / coverage));
-  }
-  
-  return Math.round(zoomFactor * 100) / 100; // Round to 2 decimals
-}
 
 function calculateMultiElementZoom(elementPositions: ElementPosition[], viewport: ViewportInfo): number {
   // Calculate bounding box of all elements
@@ -215,18 +193,6 @@ function calculateMultiElementZoom(elementPositions: ElementPosition[], viewport
   return Math.round(zoomFactor * 100) / 100;
 }
 
-function shouldCenterElement(elementPosition: ElementPosition, viewport: ViewportInfo): boolean {
-  const viewportCenterX = viewport.width / 2;
-  const viewportCenterY = viewport.height / 2;
-  
-  const distanceFromCenterX = Math.abs(elementPosition.centerX - viewportCenterX);
-  const distanceFromCenterY = Math.abs(elementPosition.centerY - viewportCenterY);
-  
-  const thresholdX = viewport.width * VIEWPORT_CONFIG.CENTER_THRESHOLD;
-  const thresholdY = viewport.height * VIEWPORT_CONFIG.CENTER_THRESHOLD;
-  
-  return distanceFromCenterX > thresholdX || distanceFromCenterY > thresholdY;
-}
 
 async function setViewportScale(cdp: CDPClient, viewport: ViewportInfo, zoomFactor: number): Promise<void> {
   await cdp.send('Emulation.setPageScaleFactor', {
@@ -287,27 +253,6 @@ async function drawHighlightOnScreenshot(
     // Apply coordinate transformation using the utilities
     let adjustedBoxModel = transformBoxModel(boxModel, scalingFactors, clipRegion);
     console.error(`  Box model margin after transform: ${adjustedBoxModel.margin.x},${adjustedBoxModel.margin.y} ${adjustedBoxModel.margin.width}x${adjustedBoxModel.margin.height}`);
-    
-    // Step 3: Apply clip region adjustment if screenshot is clipped
-    if (clipRegion) {
-      // Scale the clip region by the same device pixel ratio as the coordinates
-      const scaledClip = (Math.abs(scalingFactors.scaleX - 1) > 0.01 || Math.abs(scalingFactors.scaleY - 1) > 0.01) ? {
-        x: clipRegion.x * scalingFactors.scaleX,
-        y: clipRegion.y * scalingFactors.scaleY,
-        width: clipRegion.width * scalingFactors.scaleX,
-        height: clipRegion.height * scalingFactors.scaleY
-      } : clipRegion;
-      
-      console.error(`  Scaled clip: ${scaledClip.x},${scaledClip.y} ${scaledClip.width}x${scaledClip.height}`);
-      
-      adjustedBoxModel = {
-        content: adjustRectForClipping(adjustedBoxModel.content, scaledClip),
-        padding: adjustRectForClipping(adjustedBoxModel.padding, scaledClip),
-        border: adjustRectForClipping(adjustedBoxModel.border, scaledClip),
-        margin: adjustRectForClipping(adjustedBoxModel.margin, scaledClip)
-      };
-      console.error(`  Box model margin after clip adjust: ${adjustedBoxModel.margin.x},${adjustedBoxModel.margin.y} ${adjustedBoxModel.margin.width}x${adjustedBoxModel.margin.height}`);
-    }
     
     // Draw LLM-optimized box model highlighting (high contrast, pure colors)
     // Using Set-of-Mark approach with distinct IDs and thick borders
@@ -697,7 +642,7 @@ async function drawRulers(
  * @param args - Inspection parameters including selector, URL, property groups, and limits
  * @returns Single element result or multi-element result with spatial relationships
  */
-export async function inspectElement(args: InspectElementArgs): Promise<InspectionResult | MultiInspectionResult> {
+export async function inspectElement(args: InspectElementArgs): Promise<MultiInspectionResult> {
   const { 
     css_selector, 
     url, 
@@ -778,31 +723,17 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
       throw new Error(`Element not found: ${css_selector}`);
     }
     
-    if (nodeIds.length === 1) {
-      // Single element - return simple structure
-      return await inspectSingleElement(
-        css_selector,
-        nodeIds[0], 
-        cdp, 
-        property_groups as PropertyGroup[], 
-        css_edits,
-        args.autoCenter !== false, // Default to true unless explicitly disabled
-        args.autoZoom !== false,   // Default to true unless explicitly disabled
-        args.zoomFactor
-      );
-    } else {
-      // Multiple elements - return with relationships
-      return await inspectMultipleElements(
-        css_selector,
-        nodeIds, 
-        cdp, 
-        property_groups as PropertyGroup[], 
-        css_edits,
-        args.autoCenter !== false, // Default to true unless explicitly disabled
-        args.autoZoom !== false,   // Default to true unless explicitly disabled
-        args.zoomFactor
-      );
-    }
+    // Always use multi-element inspection (single element is just array of 1)
+    return await inspectMultipleElements(
+      css_selector,
+      nodeIds, 
+      cdp, 
+      property_groups as PropertyGroup[], 
+      css_edits,
+      args.autoCenter !== false, // Default to true unless explicitly disabled
+      args.autoZoom !== false,   // Default to true unless explicitly disabled
+      args.zoomFactor
+    );
     
   } finally {
     // Clean up all data-inspect-id attributes before closing CDP
@@ -817,188 +748,6 @@ export async function inspectElement(args: InspectElementArgs): Promise<Inspecti
   }
 }
 
-async function inspectSingleElement(
-  selector: string,
-  nodeId: number,
-  cdp: CDPClient,
-  property_groups: PropertyGroup[],
-  css_edits?: Record<string, string>,
-  autoCenter: boolean = true,
-  autoZoom: boolean = true,
-  zoomFactor?: number
-): Promise<InspectionResult> {
-  
-  // Apply CSS edits if provided
-  if (css_edits && Object.keys(css_edits).length > 0) {
-    await cdp.setInlineStyles(nodeId, css_edits);
-  }
-  
-  // Find the unique ID for this element to use for coordinate retrieval
-  const uniqueIdResult = await cdp.send('Runtime.evaluate', {
-    expression: BrowserScripts.findOrCreateUniqueId(selector),
-    returnByValue: true
-  });
-  
-  const uniqueId = uniqueIdResult.result.value;
-  if (!uniqueId) {
-    throw new Error(`Unable to get element for selector: ${selector}. Element may not be visible.`);
-  }
-
-  // Get initial element metrics using JavaScript for reliable coordinates
-  const initialMetrics = await getElementMetrics(cdp, uniqueId);
-  if (!initialMetrics) {
-    throw new Error(`Unable to get element metrics for: ${selector}. Element may not be visible.`);
-  }
-  
-  const initialBoxModel = convertElementMetricsToBoxModel(initialMetrics);
-  
-  // Get viewport info for centering and zoom calculations
-  const viewportInfo = await getViewportInfo(cdp);
-  
-  // Create element position info using reliable JavaScript coordinates
-  const elementPosition: ElementPosition = {
-    centerX: initialMetrics.viewport.x + initialMetrics.viewport.width / 2,
-    centerY: initialMetrics.viewport.y + initialMetrics.viewport.height / 2,
-    width: initialMetrics.viewport.width,
-    height: initialMetrics.viewport.height
-  };
-  
-  // Store original viewport state for restoration
-  const originalViewport = { ...viewportInfo };
-  let appliedZoomFactor = 1;
-  
-  try {
-    // Apply centering if enabled and element is not already centered
-    if (autoCenter && uniqueId && shouldCenterElement(elementPosition, viewportInfo)) {
-      await centerElement(cdp, uniqueId);
-      // Small delay to allow scroll to complete
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    
-    // Calculate and apply zoom if enabled
-    if (autoZoom || zoomFactor) {
-      if (zoomFactor) {
-        // Clamp manual zoom factor to valid range
-        appliedZoomFactor = Math.min(VIEWPORT_CONFIG.MAX_ZOOM_FACTOR, Math.max(VIEWPORT_CONFIG.MIN_ZOOM_FACTOR, zoomFactor));
-      } else {
-        appliedZoomFactor = calculateOptimalZoom(elementPosition, viewportInfo);
-      }
-      
-      if (appliedZoomFactor !== 1) {
-        await setViewportScale(cdp, viewportInfo, appliedZoomFactor);
-        // Small delay to allow zoom to apply
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
-    }
-    
-    // Get updated element metrics after centering and zooming
-    const updatedMetrics = await getElementMetrics(cdp, uniqueId);
-    const boxModel = updatedMetrics ? convertElementMetricsToBoxModel(updatedMetrics) : initialBoxModel;
-    
-    // Get computed styles
-    const computedStylesResult = await cdp.send('CSS.getComputedStyleForNode', { nodeId });
-    const allComputedStyles = convertComputedStyles(computedStylesResult.computedStyle);
-    const filteredComputedStyles = filterComputedStyles(allComputedStyles, property_groups, false);
-    
-    // Get matching CSS rules (cascade)
-    const matchedStylesResult = await cdp.send('CSS.getMatchedStylesForNode', { nodeId });
-    const allCascadeRules = convertCascadeRules(matchedStylesResult);
-    const filteredCascadeRules = filterCascadeRules(allCascadeRules, property_groups, false);
-    
-    // Highlight element with overlay AFTER zoom to ensure correct coordinates
-    await highlightElements(cdp, [nodeId]);
-    
-    // Capture screenshot with overlay (clip if zoomed)
-    let screenshotOptions: any = { format: 'png' };
-    
-    if (appliedZoomFactor > 1) {
-      // Calculate clip bounds around the element with padding 
-      // After zoom, DOM.getBoxModel coordinates are already in viewport space
-      const padding = 100;
-      const x = Math.max(0, Math.floor(boxModel.margin.x - padding));
-      const y = Math.max(0, Math.floor(boxModel.margin.y - padding));
-      const width = Math.max(1, Math.min(viewportInfo.width - x, 
-                                       Math.ceil(boxModel.margin.width + 2 * padding)));
-      const height = Math.max(1, Math.min(viewportInfo.height - y,
-                                        Math.ceil(boxModel.margin.height + 2 * padding)));
-      
-      // Only apply clip if values are valid
-      if (x >= 0 && y >= 0 && width > 0 && height > 0 && 
-          x + width <= viewportInfo.width && y + height <= viewportInfo.height) {
-        screenshotOptions.clip = { x, y, width, height, scale: 1 };
-      }
-    }
-    
-    const screenshotResult = await cdp.send('Page.captureScreenshot', screenshotOptions);
-    
-    if (!screenshotResult.data) {
-      throw new Error('Failed to capture screenshot. The page may not be loaded or visible.');
-    }
-    
-    // Draw custom highlights on the screenshot
-    let screenshotBuffer: Buffer = Buffer.from(screenshotResult.data, 'base64');
-    screenshotBuffer = await drawHighlightOnScreenshot(
-      screenshotBuffer,
-      boxModel,
-      viewportInfo,
-      screenshotOptions.clip,
-      appliedZoomFactor,
-      updatedMetrics
-    );
-    const enhancedScreenshot = screenshotBuffer.toString('base64');
-    
-    // Clear overlay
-    await cdp.send('Overlay.hideHighlight');
-    
-    // Create grouped styles
-    const groupedStyles = categorizeProperties(filteredComputedStyles);
-    
-    // Create stats
-    const stats = {
-      total_properties: Object.keys(allComputedStyles).length,
-      filtered_properties: Object.keys(filteredComputedStyles).length,
-      total_rules: allCascadeRules.length,
-      filtered_rules: filteredCascadeRules.length
-    };
-    
-    return {
-      screenshot: `data:image/png;base64,${enhancedScreenshot}`,
-      computed_styles: filteredComputedStyles,
-      grouped_styles: groupedStyles,
-      cascade_rules: filteredCascadeRules,
-      box_model: boxModel,
-      applied_edits: css_edits && Object.keys(css_edits).length > 0 ? css_edits : undefined,
-      viewport_adjustments: {
-        original_position: {
-          centerX: elementPosition.centerX,
-          centerY: elementPosition.centerY
-        },
-        centered: autoCenter && shouldCenterElement(elementPosition, viewportInfo),
-        zoom_factor: appliedZoomFactor,
-        original_viewport: originalViewport
-      },
-      stats
-    };
-    
-  } finally {
-    // Clean up: restore viewport and remove temporary attributes
-    try {
-      if (appliedZoomFactor !== 1) {
-        await resetViewportScale(cdp);
-      }
-      
-      // Clean up temporary data-inspect-id if we added one
-      if (uniqueId && uniqueId.startsWith('_inspect_temp_')) {
-        await cdp.send('Runtime.evaluate', {
-          expression: BrowserScripts.cleanupTempId(uniqueId)
-        });
-      }
-    } catch (cleanupError) {
-      // Don't throw cleanup errors, just log them
-      console.warn('Cleanup failed:', cleanupError);
-    }
-  }
-}
 
 async function inspectMultipleElements(
   selector: string,
@@ -1011,7 +760,7 @@ async function inspectMultipleElements(
   zoomFactor?: number
 ): Promise<MultiInspectionResult> {
   const elements: ElementInspection[] = [];
-  const nodeData: Array<{ selector: string, nodeId: number, boxModel: BoxModel }> = [];
+  const nodeData: Array<{ selector: string, nodeId: number, uniqueId: string, boxModel: BoxModel, elementMetrics: ElementMetrics | null }> = [];
   const elementPositions: ElementPosition[] = [];
   
   let totalProperties = 0;
@@ -1024,8 +773,12 @@ async function inspectMultipleElements(
   const originalViewport = { ...viewportInfo };
   let appliedZoomFactor = 1;
   
+  // Declare uniqueIds outside try block so it's available in cleanup
+  const uniqueIds: string[] = [];
+  
   try {
-    // First pass: collect initial box models and positions for all elements
+    // First pass: collect initial metrics and positions for all elements using JavaScript
+    
     for (let i = 0; i < nodeIds.length; i++) {
       const nodeId = nodeIds[i];
       
@@ -1034,47 +787,72 @@ async function inspectMultipleElements(
         await cdp.setInlineStyles(nodeId, css_edits);
       }
       
-      // Get initial box model for bounds and positioning
-      const boxModelResult = await cdp.send('DOM.getBoxModel', { nodeId });
-      if (!boxModelResult.model) {
-        throw new Error(`Unable to get box model for element ${i + 1} of ${nodeIds.length}: ${selector}. Element may not be visible.`);
-      }
-      const boxModel = convertBoxModel(boxModelResult.model);
+      // Create unique ID for element tracking
+      const uniqueId = `_inspect_temp_${Date.now()}_${i}`;
       
-      // Store element position for centering and zoom calculations
+      // CRITICAL FIX: Set unique ID directly on the element using CDP DOM.setAttributeValue
+      try {
+        await cdp.send('DOM.setAttributeValue', {
+          nodeId: nodeId,
+          name: 'data-inspect-id',
+          value: uniqueId
+        });
+        console.error(`Set unique ID ${uniqueId} on nodeId ${nodeId} (element ${i + 1})`);
+      } catch (error) {
+        console.error(`Failed to set attribute on nodeId ${nodeId}:`, error);
+        // Fallback to JavaScript approach
+        await cdp.send('Runtime.evaluate', {
+          expression: `
+            (function() {
+              const elements = document.querySelectorAll('${selector.replace(/'/g, "\\'")}');
+              if (elements[${i}]) {
+                elements[${i}].setAttribute('data-inspect-id', '${uniqueId}');
+                console.log('Fallback: Set unique ID ${uniqueId} on element at index ${i}:', elements[${i}].tagName, elements[${i}].className, elements[${i}].id);
+                return true;
+              }
+              console.error('Failed to set unique ID ${uniqueId} - no matching element found');
+              return false;
+            })()
+          `
+        });
+      }
+      uniqueIds.push(uniqueId);
+      
+      // Add small delay to ensure attribute is set
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      // Get element metrics using JavaScript for reliable coordinates (from working single-element approach)
+      const elementMetrics = await getElementMetrics(cdp, uniqueId);
+      if (!elementMetrics) {
+        console.error(`Failed to get metrics for uniqueId: ${uniqueId}, nodeId: ${nodeId}, selector: ${selector}[${i}]`);
+        throw new Error(`Unable to get element metrics for element ${i + 1} of ${nodeIds.length}: ${selector}. Element may not be visible.`);
+      }
+      
+      console.error(`Element ${i}: Got metrics for ${uniqueId} - position: ${elementMetrics.viewport.x},${elementMetrics.viewport.y} size: ${elementMetrics.viewport.width}x${elementMetrics.viewport.height}`);
+      
+      const boxModel = convertElementMetricsToBoxModel(elementMetrics);
+      
+      // Store element position for centering and zoom calculations using reliable JavaScript coordinates
       const elementPosition: ElementPosition = {
-        centerX: boxModel.border.x + boxModel.border.width / 2,
-        centerY: boxModel.border.y + boxModel.border.height / 2,
-        width: boxModel.border.width,
-        height: boxModel.border.height
+        centerX: elementMetrics.viewport.x + elementMetrics.viewport.width / 2,
+        centerY: elementMetrics.viewport.y + elementMetrics.viewport.height / 2,
+        width: elementMetrics.viewport.width,
+        height: elementMetrics.viewport.height
       };
       elementPositions.push(elementPosition);
       
-      // Store for distance calculations  
-      nodeData.push({ selector: `${selector}[${i}]`, nodeId, boxModel });
+      // Store for distance calculations and drawing
+      nodeData.push({ 
+        selector: `${selector}[${i}]`, 
+        nodeId, 
+        uniqueId,
+        boxModel, 
+        elementMetrics 
+      });
     }
     
-    // Get unique IDs for all elements for centering
-    const uniqueIdsResult = await cdp.send('Runtime.evaluate', {
-      expression: `
-        (function() {
-          const elements = Array.from(document.querySelectorAll('${selector.replace(/'/g, "\\'")}'));
-          return elements.map((el, i) => {
-            let uniqueId = el.getAttribute('data-inspect-id');
-            if (!uniqueId) {
-              uniqueId = '_inspect_temp_' + Date.now() + '_' + i;
-              el.setAttribute('data-inspect-id', uniqueId);
-            }
-            return uniqueId;
-          });
-        })();
-      `,
-      returnByValue: true
-    });
-    const uniqueIds = uniqueIdsResult.result.value;
-    
-    // Apply centering if enabled
-    if (autoCenter && uniqueIds && uniqueIds.length > 0) {
+    // Apply centering based on bounding box (works for 1 or many elements)
+    if (autoCenter && uniqueIds.length > 0) {
       await centerMultipleElements(cdp, uniqueIds);
       // Small delay to allow scroll to complete
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -1100,14 +878,15 @@ async function inspectMultipleElements(
     for (let i = 0; i < nodeIds.length; i++) {
       const nodeId = nodeIds[i];
       
-      // Get updated box model after centering and zooming
-      const updatedBoxModelResult = await cdp.send('DOM.getBoxModel', { nodeId });
-      const boxModel = updatedBoxModelResult.model ? 
-        convertBoxModel(updatedBoxModelResult.model) : 
+      // Get updated element metrics after centering and zooming using JavaScript
+      const updatedMetrics = await getElementMetrics(cdp, nodeData[i].uniqueId);
+      const boxModel = updatedMetrics ? 
+        convertElementMetricsToBoxModel(updatedMetrics) : 
         nodeData[i].boxModel; // fallback to original
       
-      // Update nodeData with new box model
+      // Update nodeData with new metrics and box model
       nodeData[i].boxModel = boxModel;
+      nodeData[i].elementMetrics = updatedMetrics;
       
       // Get computed styles
       const computedStylesResult = await cdp.send('CSS.getComputedStyleForNode', { nodeId });
@@ -1144,12 +923,23 @@ async function inspectMultipleElements(
     
     // Wait for highlight overlay to render
     await new Promise(resolve => setTimeout(resolve, 200));
+
+    // CRITICAL FIX: Update all element metrics with post-zoom coordinates using JavaScript
+    for (let i = 0; i < nodeIds.length; i++) {
+      const updatedMetrics = await getElementMetrics(cdp, nodeData[i].uniqueId);
+      if (updatedMetrics) {
+        nodeData[i].elementMetrics = updatedMetrics;
+        nodeData[i].boxModel = convertElementMetricsToBoxModel(updatedMetrics);
+        // Update elements array with final box model
+        elements[i].box_model = nodeData[i].boxModel;
+      }
+    }
   
   // Capture screenshot with all overlays (clip if zoomed)
   let screenshotOptions: any = { format: 'png' };
   
   if (appliedZoomFactor > 1 && nodeData.length > 0) {
-    // Calculate bounding box for all elements
+    // Calculate bounding box for all elements using FINAL coordinates
     // After zoom, DOM.getBoxModel coordinates are already in viewport space
     let minX = Infinity, minY = Infinity;
     let maxX = -Infinity, maxY = -Infinity;
@@ -1184,15 +974,16 @@ async function inspectMultipleElements(
     throw new Error('Failed to capture screenshot. The page may not be loaded or visible.');
   }
   
-  // Draw custom highlights on the screenshot (highlight the first element)
+  // Draw custom highlights on the screenshot for all elements
   let screenshotBuffer: Buffer = Buffer.from(screenshotResult.data, 'base64');
-  if (nodeData.length > 0) {
+  for (let i = 0; i < nodeData.length; i++) {
     screenshotBuffer = await drawHighlightOnScreenshot(
       screenshotBuffer,
-      nodeData[0].boxModel,
+      nodeData[i].boxModel,
       viewportInfo,
       screenshotOptions.clip,
-      appliedZoomFactor
+      appliedZoomFactor,
+      nodeData[i].elementMetrics  // Pass element metrics for accurate rendering
     );
   }
   const enhancedScreenshot = screenshotBuffer.toString('base64');
@@ -1230,10 +1021,14 @@ async function inspectMultipleElements(
         await resetViewportScale(cdp);
       }
       
-      // Clean up all data-inspect-id attributes
-      await cdp.send('Runtime.evaluate', {
-        expression: BrowserScripts.cleanupInspectIds()
-      });
+      // Clean up all temporary data-inspect-id attributes
+      for (const uniqueId of uniqueIds) {
+        if (uniqueId.startsWith('_inspect_temp_')) {
+          await cdp.send('Runtime.evaluate', {
+            expression: BrowserScripts.cleanupTempId(uniqueId)
+          });
+        }
+      }
     } catch (cleanupError) {
       // Don't throw cleanup errors, just log them
       console.warn('Multi-element cleanup failed:', cleanupError);
@@ -1341,21 +1136,6 @@ function calculatePairwiseRelationship(
   };
 }
 
-function convertBoxModel(cdpBoxModel: any): BoxModel {
-  // CDP returns box model as arrays of 8 numbers [x1, y1, x2, y2, x3, y3, x4, y4]
-  // We convert to simple rect format
-  const contentQuad = cdpBoxModel.content;
-  const paddingQuad = cdpBoxModel.padding;
-  const borderQuad = cdpBoxModel.border;
-  const marginQuad = cdpBoxModel.margin;
-  
-  return {
-    content: quadToRect(contentQuad),
-    padding: quadToRect(paddingQuad),
-    border: quadToRect(borderQuad),
-    margin: quadToRect(marginQuad)
-  };
-}
 
 function quadToRect(quad: number[]) {
   // Convert quad [x1, y1, x2, y2, x3, y3, x4, y4] to rect

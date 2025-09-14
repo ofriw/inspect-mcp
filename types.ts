@@ -77,31 +77,12 @@ export interface ViewportInfo {
 }
 
 export interface ViewportAdjustments {
-  original_position?: {
-    centerX: number;
-    centerY: number;
-  };
-  original_positions?: ElementPosition[];  // For multi-element inspections
+  original_positions: ElementPosition[];  // Original positions of all selected elements
   centered: boolean;
   zoom_factor: number;
   original_viewport: ViewportInfo;
 }
 
-export interface InspectionResult {
-  screenshot: string;
-  computed_styles: Record<string, string>;
-  grouped_styles?: GroupedStyles;
-  cascade_rules: CascadeRule[];
-  box_model: BoxModel;
-  applied_edits?: Record<string, string>;
-  viewport_adjustments?: ViewportAdjustments;
-  stats?: {
-    total_properties: number;
-    filtered_properties: number;
-    total_rules: number;
-    filtered_rules: number;
-  };
-}
 
 export interface ElementDistance {
   horizontal: number;  // pixels between nearest horizontal edges

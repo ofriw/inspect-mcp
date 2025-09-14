@@ -256,11 +256,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Extract base64 data from data URL for image block
     const base64Data = result.screenshot.replace(/^data:image\/png;base64,/, '');
     
-    // Check if this is a multi-element result
-    const isMultiElement = 'elements' in result;
+    // Check if this is a single element (length 1) or multi-element result
+    const isMultiElement = result.elements.length > 1;
     
-    // Create minimal diagnostic data (no empty arrays/objects)
-    const diagnosticData: any = { ...result };
+    // Create diagnostic data based on whether it's single or multi element
+    let diagnosticData: any;
+    if (isMultiElement) {
+      // Multi-element: keep full structure
+      diagnosticData = { ...result };
+    } else {
+      // Single element: flatten to match old InspectionResult format for backward compatibility
+      const singleElement = result.elements[0];
+      diagnosticData = {
+        computed_styles: singleElement.computed_styles,
+        grouped_styles: singleElement.grouped_styles,
+        cascade_rules: singleElement.cascade_rules,
+        box_model: singleElement.box_model,
+        applied_edits: singleElement.applied_edits,
+        viewport_adjustments: {
+          original_position: result.viewport_adjustments?.original_positions[0] || { centerX: 0, centerY: 0 },
+          centered: result.viewport_adjustments?.centered || false,
+          zoom_factor: result.viewport_adjustments?.zoom_factor || 1,
+          original_viewport: result.viewport_adjustments?.original_viewport
+        },
+        stats: result.stats
+      };
+    }
     delete diagnosticData.screenshot; // Don't duplicate in diagnostic
     
     const elementText = isMultiElement 
