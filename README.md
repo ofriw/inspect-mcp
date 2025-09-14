@@ -34,17 +34,6 @@ Getting CSS exactly right is hard. Designs don't match implementation, layouts b
 
 ---
 
-## What You Get
-
-**Visual debugging** - Screenshots with element highlights and measurements
-**Live CSS testing** - Test changes without modifying source files
-**Computed styles** - See actual CSS values, not just what's written
-**Cascade analysis** - Understand which rules are actually applied
-**Multi-element inspection** - Analyze spacing and alignment between elements
-**Cross-browser validation** - Test across different viewport sizes
-
----
-
 ## Example: Fixing Button Spacing
 
 **Problem:** "The submit button is too close to the form fields"
@@ -118,28 +107,6 @@ npm start
 
 ---
 
-## Use Cases
-
-### CSS Debugging
-- Fix layout issues visually
-- Debug specificity problems
-- Test responsive breakpoints
-- Validate cross-browser consistency
-
-### Design Implementation
-- Match Figma designs pixel-perfectly
-- Validate spacing and typography
-- Check color accuracy
-- Ensure design system compliance
-
-### Quality Assurance
-- Visual regression testing
-- Component consistency checks
-- Accessibility validation
-- Performance impact analysis
-
----
-
 ## API Reference
 
 ### `inspect_element`
@@ -173,51 +140,6 @@ npm start
 - Node.js 18+
 - Chrome/Chromium browser
 - AI agent with MCP support (Claude Desktop, Continue, etc.)
-
-**Installation:**
-```bash
-git clone https://github.com/your-repo/inspect-mcp.git
-cd inspect-mcp
-npm install
-npm run build
-
-# Optional: Headless mode
-HEADLESS=true npm start
-```
-
----
-
-## Troubleshooting
-
-**Chrome connection issues:**
-```bash
-chrome --remote-debugging-port=9222
-```
-
-**Element not found:**
-- Verify CSS selector in browser DevTools
-- Check if element loads after page navigation
-
-**Performance:**
-- Use specific selectors (avoid broad matches)
-- Limit property groups to reduce data
-- Set reasonable element limits
-
----
-
-## Contributing
-
-Found a bug or have ideas?
-- [Report issues](https://github.com/your-repo/inspect-mcp/issues)
-- [Join discussions](https://github.com/your-repo/inspect-mcp/discussions)
-
-```bash
-# Development setup
-git clone https://github.com/your-repo/inspect-mcp.git
-cd inspect-mcp
-npm install
-npm test
-```
 
 ---
 
