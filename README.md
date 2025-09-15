@@ -1,6 +1,6 @@
-# Inspect-MCP
+# SARGEL - Style And Rendering Graphical Element Lens
 
-[![npm version](https://img.shields.io/npm/v/inspect-mcp.svg)](https://www.npmjs.com/package/inspect-mcp)
+[![npm version](https://img.shields.io/npm/v/sargel.svg)](https://www.npmjs.com/package/sargel)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg)](https://nodejs.org/)
 
@@ -8,7 +8,7 @@
 
 Whether you're implementing designs or debugging CSS issues, this tool gives AI agents the ability to see and fix UI problems visually - just like using browser DevTools. Inspect elements, test CSS changes instantly, and iterate until perfect.
 
-<img src="docs/images/hero-screenshot.png" width="800" alt="AI agent using Inspect-MCP to visually inspect and debug a web element with highlighted overlays and detailed CSS analysis">
+<img src="docs/images/hero-screenshot.png" width="800" alt="AI agent using SARGEL to visually inspect and debug a web element with highlighted overlays and detailed CSS analysis">
 
 ---
 
@@ -77,33 +77,6 @@ Getting CSS exactly right is hard. Designs don't match implementation, layouts b
 <img src="docs/images/css-edits-after.png" width="400" alt="After: Perfect button spacing">
 
 *Before and after: Visual iteration until pixel-perfect*
-
----
-
-## Quick Start
-
-```bash
-# Install and build
-npm install inspect-mcp
-npm run build
-npm start
-```
-
-**Connect your AI agent:**
-```json
-{
-  "mcpServers": {
-    "inspect-mcp": {
-      "command": "node",
-      "args": ["/path/to/inspect-mcp/dist/index.js"],
-      "transport": "stdio"
-    }
-  }
-}
-```
-
-**Try it:**
-*"Inspect the header on https://example.com and fix the alignment issues"*
 
 ---
 

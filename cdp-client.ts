@@ -162,7 +162,7 @@ export async function ensureChromeWithCDP(): Promise<BrowserInstance> {
   
   try {
     // Create a unique user data directory for this Chrome instance
-    const userDataDir = join(tmpdir(), `chrome-mcp-${randomBytes(8).toString('hex')}`);
+    const userDataDir = join(tmpdir(), `chrome-sargel-${randomBytes(8).toString('hex')}`);
     
     // Ensure the directory exists with proper permissions to prevent ENOENT in chrome-launcher
     mkdirSync(userDataDir, { recursive: true, mode: 0o700 });

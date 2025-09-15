@@ -1,5 +1,5 @@
 /**
- * Configuration constants for the Inspect MCP system.
+ * Configuration constants for the SARGEL system.
  * Centralized constants for better maintainability and configuration.
  */
 

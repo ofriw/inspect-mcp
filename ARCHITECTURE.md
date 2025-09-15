@@ -1,8 +1,8 @@
-# Inspect MCP Architecture
+# SARGEL Architecture
 
 ## Overview
 
-Inspect MCP is an MCP server that provides sophisticated DOM element inspection for AI agents building pixel-perfect frontends. The architecture automatically adapts between single and multi-element inspection modes, providing spatial relationship analysis when multiple elements are detected.
+SARGEL (Style And Rendering Graphical Element Lens) is an MCP server that provides sophisticated DOM element inspection for AI agents building pixel-perfect frontends. The architecture automatically adapts between single and multi-element inspection modes, providing spatial relationship analysis when multiple elements are detected.
 
 ## Design Philosophy
 
